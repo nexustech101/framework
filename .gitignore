@@ -32,6 +32,9 @@ htmlcov/
 .idea/
 *.swp
 
-# Databases and logs
+# Databases and other miscellaneous files
 *.db
 *.log
+*.zip
+test.py
+command.py
