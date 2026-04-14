@@ -11,9 +11,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/nexustech101/registers/blob/main/LICENSE)
  
 [CLI Framework](#registerscli) · [Database Registry](#registersdb) · [FastAPI Integration](#fastapi-integration) · [Error Reference](#error-reference)
- 
-Register once. Use everywhere. One decorator makes a function a CLI command. One decorator gives a Pydantic model a full persistence layer. 
-Built for FastAPI, data engineering, and enterprise relational schemas.
 
 </div>
 <br>
