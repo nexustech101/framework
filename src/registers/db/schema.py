@@ -41,6 +41,19 @@ from registers.db.typing_utils import sqlalchemy_type_for_annotation
 logger = logging.getLogger(__name__)
 
 
+def _quote_identifier(engine: Engine, identifier: str) -> str:
+    return engine.dialect.identifier_preparer.quote_identifier(identifier)
+
+
+def _build_rename_table_sql(engine: Engine, source: str, target: str) -> str:
+    source_ident = _quote_identifier(engine, source)
+    target_ident = _quote_identifier(engine, target)
+
+    if engine.dialect.name in {"mysql", "mariadb"}:
+        return f"RENAME TABLE {source_ident} TO {target_ident}"
+    return f"ALTER TABLE {source_ident} RENAME TO {target_ident}"
+
+
 class SchemaManager:
     """
     Handles DDL operations for a single table.
@@ -149,10 +162,16 @@ class SchemaManager:
             )
 
         sa_type = sqlalchemy_type_for_annotation(annotation)
-        col_ddl = f'ALTER TABLE "{self._table_name}" ADD COLUMN "{column_name}" {sa_type}'
+        table_ident = _quote_identifier(self._engine, self._table_name)
+        column_ident = _quote_identifier(self._engine, column_name)
+        type_sql = sa_type.compile(dialect=self._engine.dialect)
+        col_ddl = f"ALTER TABLE {table_ident} ADD COLUMN {column_ident} {type_sql}"
         if not nullable:
-            # SQLite requires a DEFAULT when adding NOT NULL columns
-            col_ddl += " NOT NULL DEFAULT ''"
+            # SQLite requires a DEFAULT when adding NOT NULL columns.
+            if self._engine.dialect.name == "sqlite":
+                col_ddl += " NOT NULL DEFAULT ''"
+            else:
+                col_ddl += " NOT NULL"
 
         try:
             with self._engine.begin() as conn:
@@ -212,9 +231,7 @@ class SchemaManager:
         """
         try:
             with self._engine.begin() as conn:
-                conn.execute(
-                    text(f'ALTER TABLE "{self._table_name}" RENAME TO "{new_name}"')
-                )
+                conn.execute(text(_build_rename_table_sql(self._engine, self._table_name, new_name)))
             logger.info("Renamed table '%s' to '%s'.", self._table_name, new_name)
         except (SQLAlchemyError, OperationalError) as exc:
             logger.exception("Failed to rename table '%s' to '%s'.", self._table_name, new_name)
