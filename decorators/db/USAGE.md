@@ -2,14 +2,16 @@
 
 Decorator-driven persistence for Pydantic models. Attach a SQLite-backed manager to any `BaseModel` and get a full typed CRUD API with zero boilerplate.
 
+Use `database_registry` in new code. Earlier drafts of this guide referred to the decorator as `database_manager`; the tested public API name is `database_registry`.
+
 ```python
 from pydantic import BaseModel
-from decorators.db import database_manager, db_field
+from decorators.db import database_registry
 
-@database_manager("app.db", table_name="users")
+@database_registry("app.db", table_name="users", unique_fields=["email"])
 class User(BaseModel):
-    id: int | None = db_field(primary_key=True, default=None)
-    email: str     = db_field(unique=True)
+    id: int | None = None
+    email: str
     name: str
 
 user = User.objects.create(name="Alice", email="alice@example.com")
@@ -57,12 +59,12 @@ pip install -e .
 
 ```python
 from pydantic import BaseModel
-from decorators.db import database_manager, db_field
+from decorators.db import database_registry
 
-@database_manager("sqlite:///blog.db", table_name="posts")
+@database_registry("sqlite:///blog.db", table_name="posts", unique_fields=["slug"])
 class Post(BaseModel):
-    id: int | None = db_field(primary_key=True, default=None)
-    slug: str      = db_field(unique=True)
+    id: int | None = None
+    slug: str
     title: str
     body: str
     published: bool = False
@@ -87,6 +89,13 @@ drafts    = Post.objects.filter(published=False)
 all_posts = Post.objects.all()
 count     = Post.objects.count()
 ```
+
+### Primary key conventions
+
+- `id: int | None = None` means a database-managed autoincrement primary key.
+- `id: int` means a manual primary key and must be provided explicitly on create.
+- `create(id=...)` is rejected for database-managed keys.
+- Persisted primary keys are immutable once a record exists.
 
 ---
 
@@ -219,9 +228,10 @@ on the fields via `db_field`.
 | `manager_attr` | `str` | `"objects"` | Attribute name for the manager: `User.objects`. |
 | `auto_create` | `bool` | `True` | Create the table at decoration time if it doesn't exist. |
 
-> `autoincrement` and `unique_fields` are no longer decorator arguments.
-> Declare them on the model fields using `db_field`. The decorator arguments
-> still work for backwards compatibility but field-level declarations are preferred.
+> `autoincrement` and `unique_fields` are supported decorator arguments in the
+> current implementation. For the common path, plain type annotations plus
+> decorator options are enough: use `id: int | None = None` for DB-managed keys
+> and `id: int` for manual keys.
 
 ### Custom manager attribute
 
@@ -243,7 +253,9 @@ All persistence operations live on `Model.objects` (or your custom `manager_attr
 ### `create(**data) → Model`
 
 Strict INSERT. Raises `DuplicateKeyError` on primary key collision or
-`UniqueConstraintError` on a unique field violation.
+`UniqueConstraintError` on a unique field violation. For models using a
+database-managed key (`id: int | None = None`), passing `id=` explicitly raises
+`InvalidPrimaryKeyAssignmentError`.
 
 ```python
 user = User.objects.create(name="Alice", email="alice@example.com")
@@ -262,9 +274,12 @@ user = User.objects.strict_create(name="Alice", email="alice@example.com")
 INSERT if the primary key is new, UPDATE if it already exists. Atomic — uses
 `INSERT … ON CONFLICT DO UPDATE` with no separate pre-check.
 
+If no primary key is supplied and the registry has `unique_fields`, those unique fields are used as the conflict target.
+
 ```python
 User.objects.upsert(id=1, name="Alice", email="alice@example.com")  # insert
 User.objects.upsert(id=1, name="Alicia", email="alice@example.com") # update
+User.objects.upsert(name="Alicia", email="alice@example.com")       # upsert by unique field
 ```
 
 ---
@@ -276,6 +291,8 @@ Three methods are injected onto every instance by the decorator.
 ### `instance.save() → self`
 
 Persists the current instance using upsert semantics. Mutates and returns `self`.
+Primary keys are immutable after persistence; mutating the PK and then calling
+`save()` raises `ImmutableFieldError`.
 
 ```python
 user = User.objects.require(1)
@@ -578,6 +595,12 @@ Product.categories = HasManyThrough(Category, through=ProductCategory,
 
 ## Error Handling
 
+In addition to the core CRUD and schema errors, the registry now distinguishes
+two primary-key policy violations explicitly:
+
+- `InvalidPrimaryKeyAssignmentError` when a database-managed key is supplied on `create()`.
+- `ImmutableFieldError` when a persisted primary key is mutated and then saved.
+
 ```
 RegistryError
 ├── ConfigurationError       bad decorator arguments or field references
@@ -593,7 +616,8 @@ RegistryError
 
 ```python
 from decorators.db import (
-    DuplicateKeyError, UniqueConstraintError,
+    DuplicateKeyError, ImmutableFieldError, InvalidPrimaryKeyAssignmentError,
+    UniqueConstraintError,
     RecordNotFoundError, InvalidQueryError, RegistryError,
 )
 
@@ -603,6 +627,11 @@ except DuplicateKeyError:
     print("Primary key already exists")
 except UniqueConstraintError:
     print("That email is already taken")
+
+try:
+    User.objects.create(id=10, email="alice@example.com", name="Alice")
+except InvalidPrimaryKeyAssignmentError:
+    print("The database manages this primary key.")
 
 try:
     User.objects.require(999)

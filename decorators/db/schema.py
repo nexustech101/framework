@@ -34,7 +34,7 @@ from sqlalchemy import Column, MetaData, Table, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from decorators.db.errors import MigrationError, SchemaError
+from decorators.db.exceptions import MigrationError, SchemaError
 from decorators.db.typing_utils import sqlalchemy_type_for_annotation
 
 

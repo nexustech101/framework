@@ -38,3 +38,4 @@ htmlcov/
 *.zip
 test.py
 command.py
+ecommerce-backend-example/

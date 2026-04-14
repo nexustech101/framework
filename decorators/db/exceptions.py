@@ -48,6 +48,14 @@ class DuplicateKeyError(RegistryError):
     """Raised when an INSERT collides with an existing primary-key value."""
 
 
+class InvalidPrimaryKeyAssignmentError(RegistryError):
+    """Raised when callers assign a database-managed primary key explicitly."""
+
+
+class ImmutableFieldError(RegistryError):
+    """Raised when an immutable persisted field is mutated."""
+
+
 class UniqueConstraintError(RegistryError):
     """Raised when an INSERT or UPDATE violates a UNIQUE constraint."""
 

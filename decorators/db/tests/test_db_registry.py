@@ -36,7 +36,7 @@ from decorators.db import (
     RecordNotFoundError,
     RelationshipError,
     UniqueConstraintError,
-    database_manager,
+    database_registry,
     dispose_all,
 )
 
@@ -62,7 +62,7 @@ def _url(tmp_path: Path, name: str = "test") -> str:
 
 class TestManagerAttachment:
     def test_objects_attr_is_database_registry(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -70,7 +70,7 @@ class TestManagerAttachment:
         assert isinstance(User.objects, DatabaseRegistry)
 
     def test_custom_manager_attr(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="items", key_field="id",
+        @database_registry(_url(tmp_path), table_name="items", key_field="id",
                            manager_attr="db")
         class Item(BaseModel):
             id: int
@@ -81,14 +81,14 @@ class TestManagerAttachment:
 
     def test_manager_attr_collision_raises(self, tmp_path):
         with pytest.raises(ModelRegistrationError, match="already defined"):
-            @database_manager(_url(tmp_path), table_name="x", key_field="id",
+            @database_registry(_url(tmp_path), table_name="x", key_field="id",
                                manager_attr="objects")
             class Clash(BaseModel):
                 id: int
                 objects: str = "oops"
 
     def test_instance_has_save_delete_refresh(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -99,7 +99,7 @@ class TestManagerAttachment:
         assert callable(user.refresh)
 
     def test_schema_classmethods_exist(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -111,7 +111,7 @@ class TestManagerAttachment:
 
     def test_non_basemodel_raises(self, tmp_path):
         with pytest.raises(ModelRegistrationError):
-            @database_manager(_url(tmp_path))
+            @database_registry(_url(tmp_path))
             class NotAModel:
                 id: int = 1
 
@@ -119,7 +119,7 @@ class TestManagerAttachment:
         with pytest.raises(ModelRegistrationError):
             # Actually, using dataclass could be useful for some use cases (immutable models?)
             # We're using pydantic models for validation and type coercion
-            @database_manager(_url(tmp_path))
+            @database_registry(_url(tmp_path))
             @dataclass
             class Bad(BaseModel):
                 id: int
@@ -132,32 +132,32 @@ class TestManagerAttachment:
 class TestConfiguration:
     def test_unknown_key_field_raises(self, tmp_path):
         with pytest.raises(ConfigurationError, match="key_field"):
-            @database_manager(_url(tmp_path), key_field="nonexistent")
+            @database_registry(_url(tmp_path), key_field="nonexistent")
             class User(BaseModel):
                 id: int
 
     def test_unknown_unique_field_raises(self, tmp_path):
         with pytest.raises(ConfigurationError, match="unique_fields"):
-            @database_manager(_url(tmp_path), unique_fields=["ghost"])
+            @database_registry(_url(tmp_path), unique_fields=["ghost"])
             class User(BaseModel):
                 id: int
 
     def test_duplicate_unique_fields_raises(self, tmp_path):
         with pytest.raises(ConfigurationError, match="duplicates"):
-            @database_manager(_url(tmp_path), unique_fields=["name", "name"])
+            @database_registry(_url(tmp_path), unique_fields=["name", "name"])
             class User(BaseModel):
                 id: int
                 name: str
 
     def test_autoincrement_requires_integer_key(self, tmp_path):
         with pytest.raises(ConfigurationError, match="integer"):
-            @database_manager(_url(tmp_path), autoincrement=True)
+            @database_registry(_url(tmp_path), autoincrement=True)
             class Widget(BaseModel):
                 id: str | None = None
 
     def test_autoincrement_requires_nullable_key(self, tmp_path):
         with pytest.raises(ConfigurationError, match="allow None"):
-            @database_manager(_url(tmp_path), autoincrement=True)
+            @database_registry(_url(tmp_path), autoincrement=True)
             class Widget(BaseModel):
                 id: int  # not nullable, no default
 
@@ -168,7 +168,7 @@ class TestConfiguration:
 
 class TestCreate:
     def test_create_returns_model_instance(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -179,7 +179,7 @@ class TestCreate:
         assert user.name == "Alice"
 
     def test_autoincrement_assigns_generated_id(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id",
+        @database_registry(_url(tmp_path), table_name="users", key_field="id",
                            autoincrement=True)
         class User(BaseModel):
             id: int | None = None
@@ -191,7 +191,7 @@ class TestCreate:
         assert u2.id == 2
 
     def test_strict_create_is_alias(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -202,7 +202,7 @@ class TestCreate:
 
 class TestRead:
     def test_get_by_primary_key(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -213,7 +213,7 @@ class TestRead:
         assert user.name == "Alice"
 
     def test_get_by_keyword(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -224,7 +224,7 @@ class TestRead:
         assert user.id == 1
 
     def test_get_missing_returns_none(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -232,7 +232,7 @@ class TestRead:
         assert User.objects.get(999) is None
 
     def test_require_raises_when_missing(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -241,7 +241,7 @@ class TestRead:
             User.objects.require(999)
 
     def test_all_returns_all_rows(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -251,7 +251,7 @@ class TestRead:
         assert len(User.objects.all()) == 2
 
     def test_get_all_alias(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -260,7 +260,7 @@ class TestRead:
         assert len(User.objects.get_all()) == 1
 
     def test_filter_with_criteria(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -275,7 +275,7 @@ class TestRead:
         assert all(u.role == "admin" for u in admins)
 
     def test_filter_with_limit_and_offset(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -287,7 +287,7 @@ class TestRead:
         assert len(page) == 3
 
     def test_exists_true_and_false(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -297,7 +297,7 @@ class TestRead:
         assert User.objects.exists(id=99) is False
 
     def test_count_all_and_filtered(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             role: str
@@ -310,7 +310,7 @@ class TestRead:
         assert User.objects.count(role="admin") == 2
 
     def test_first_and_last(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -322,7 +322,7 @@ class TestRead:
         assert User.objects.last().name == "Second"  # type: ignore[union-attr]
 
     def test_first_on_empty_returns_none(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -332,7 +332,7 @@ class TestRead:
 
 class TestUpdate:
     def test_save_updates_existing(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -344,7 +344,7 @@ class TestUpdate:
         assert User.objects.require(1).name == "Alicia"
 
     def test_upsert_inserts_new(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -354,7 +354,7 @@ class TestUpdate:
         assert user.name == "Alice"
 
     def test_upsert_updates_existing(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -365,7 +365,7 @@ class TestUpdate:
         assert User.objects.count() == 1
 
     def test_update_where_returns_updated_records(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -378,7 +378,7 @@ class TestUpdate:
         assert all(u.role == "admin" for u in updated)
 
     def test_update_where_empty_criteria_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -387,7 +387,7 @@ class TestUpdate:
             User.objects.update_where({}, name="oops")
 
     def test_update_where_empty_updates_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -396,7 +396,7 @@ class TestUpdate:
             User.objects.update_where({"id": 1})
 
     def test_refresh_returns_fresh_data(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -411,7 +411,7 @@ class TestUpdate:
 
 class TestDelete:
     def test_delete_by_instance(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -423,7 +423,7 @@ class TestDelete:
         assert User.objects.count() == 0
 
     def test_delete_missing_returns_false(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -431,7 +431,7 @@ class TestDelete:
         assert User.objects.delete(999) is False
 
     def test_delete_where_returns_count(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             role: str
@@ -445,7 +445,7 @@ class TestDelete:
         assert User.objects.count() == 1
 
     def test_delete_where_no_criteria_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
 
@@ -459,7 +459,7 @@ class TestDelete:
 
 class TestConstraints:
     def test_create_duplicate_pk_raises_duplicate_key_error(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -469,7 +469,7 @@ class TestConstraints:
             User.objects.create(id=1, name="Bob")
 
     def test_unique_field_violation_raises_unique_constraint_error(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id",
+        @database_registry(_url(tmp_path), table_name="users", key_field="id",
                            unique_fields=["email"])
         class User(BaseModel):
             id: int
@@ -480,7 +480,7 @@ class TestConstraints:
             User.objects.create(id=2, email="alice@example.com")
 
     def test_invalid_field_in_filter_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -489,7 +489,7 @@ class TestConstraints:
             User.objects.get(ghost="value")
 
     def test_positional_and_keyword_lookup_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -498,7 +498,7 @@ class TestConstraints:
             User.objects.get(1, name="Alice")
 
     def test_multiple_positional_args_raises(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -513,7 +513,7 @@ class TestConstraints:
 
 class TestSchema:
     def test_schema_exists_after_creation(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -521,7 +521,7 @@ class TestSchema:
         assert User.schema_exists() is True
 
     def test_schema_not_exists_after_drop(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -530,7 +530,7 @@ class TestSchema:
         assert User.schema_exists() is False
 
     def test_truncate_removes_all_rows(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -541,7 +541,7 @@ class TestSchema:
         assert User.objects.count() == 0
 
     def test_auto_create_false_skips_table_creation(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id",
+        @database_registry(_url(tmp_path), table_name="users", key_field="id",
                            auto_create=False)
         class User(BaseModel):
             id: int
@@ -552,7 +552,7 @@ class TestSchema:
         assert User.schema_exists() is True
 
     def test_add_column_adds_new_column(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="items", key_field="id")
+        @database_registry(_url(tmp_path), table_name="items", key_field="id")
         class Item(BaseModel):
             id: int
             name: str
@@ -562,7 +562,7 @@ class TestSchema:
         assert "description" in cols
 
     def test_add_column_duplicate_raises_migration_error(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="items", key_field="id")
+        @database_registry(_url(tmp_path), table_name="items", key_field="id")
         class Item(BaseModel):
             id: int
             name: str
@@ -571,7 +571,7 @@ class TestSchema:
             Item.objects.add_column("name", str)
 
     def test_ensure_column_is_idempotent(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="items", key_field="id")
+        @database_registry(_url(tmp_path), table_name="items", key_field="id")
         class Item(BaseModel):
             id: int
             name: str
@@ -618,13 +618,13 @@ class TestHasMany:
     def test_has_many_returns_related_records(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             author_id: int
             title: str
 
-        @database_manager(url, table_name="authors", key_field="id")
+        @database_registry(url, table_name="authors", key_field="id")
         class Author(BaseModel):
             id: int
             name: str
@@ -644,13 +644,13 @@ class TestHasMany:
     def test_has_many_returns_empty_list_when_no_related(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             author_id: int
             title: str
 
-        @database_manager(url, table_name="authors", key_field="id")
+        @database_registry(url, table_name="authors", key_field="id")
         class Author(BaseModel):
             id: int
             name: str
@@ -664,13 +664,13 @@ class TestHasMany:
     def test_has_many_is_read_only(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             author_id: int
             title: str
 
-        @database_manager(url, table_name="authors", key_field="id")
+        @database_registry(url, table_name="authors", key_field="id")
         class Author(BaseModel):
             id: int
             name: str
@@ -690,12 +690,12 @@ class TestBelongsTo:
     def test_belongs_to_returns_parent(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="authors", key_field="id")
+        @database_registry(url, table_name="authors", key_field="id")
         class Author(BaseModel):
             id: int
             name: str
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             author_id: int
@@ -714,12 +714,12 @@ class TestBelongsTo:
     def test_belongs_to_returns_none_when_null_fk(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="authors", key_field="id")
+        @database_registry(url, table_name="authors", key_field="id")
         class Author(BaseModel):
             id: int
             name: str
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             author_id: int | None = None
@@ -736,18 +736,18 @@ class TestHasManyThrough:
     def test_many_to_many_via_join_table(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="tags", key_field="id")
+        @database_registry(url, table_name="tags", key_field="id")
         class Tag(BaseModel):
             id: int
             name: str
 
-        @database_manager(url, table_name="post_tags", key_field="id")
+        @database_registry(url, table_name="post_tags", key_field="id")
         class PostTag(BaseModel):
             id: int
             post_id: int
             tag_id: int
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             title: str
@@ -771,18 +771,18 @@ class TestHasManyThrough:
     def test_many_to_many_empty_when_no_joins(self, tmp_path):
         url = _url(tmp_path)
 
-        @database_manager(url, table_name="tags", key_field="id")
+        @database_registry(url, table_name="tags", key_field="id")
         class Tag(BaseModel):
             id: int
             name: str
 
-        @database_manager(url, table_name="post_tags", key_field="id")
+        @database_registry(url, table_name="post_tags", key_field="id")
         class PostTag(BaseModel):
             id: int
             post_id: int
             tag_id: int
 
-        @database_manager(url, table_name="posts", key_field="id")
+        @database_registry(url, table_name="posts", key_field="id")
         class Post(BaseModel):
             id: int
             title: str
@@ -801,7 +801,7 @@ class TestHasManyThrough:
 
 class TestConcurrency:
     def test_concurrent_inserts_all_succeed_with_unique_keys(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="counters", key_field="id")
+        @database_registry(_url(tmp_path), table_name="counters", key_field="id")
         class Counter(BaseModel):
             id: int
             value: int
@@ -825,7 +825,7 @@ class TestConcurrency:
 
     def test_concurrent_upserts_converge(self, tmp_path):
         """Concurrent upserts on the same key should not raise; last write wins."""
-        @database_manager(_url(tmp_path), table_name="settings", key_field="id")
+        @database_registry(_url(tmp_path), table_name="settings", key_field="id")
         class Setting(BaseModel):
             id: int
             value: str
@@ -858,7 +858,7 @@ class TestTypeMapping:
     def test_various_field_types_persist_correctly(self, tmp_path):
         from datetime import date, datetime
 
-        @database_manager(_url(tmp_path), table_name="events", key_field="id")
+        @database_registry(_url(tmp_path), table_name="events", key_field="id")
         class Event(BaseModel):
             id: int
             name: str
@@ -882,7 +882,7 @@ class TestTypeMapping:
         assert fetched.active is True
 
     def test_optional_fields_allow_none(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -893,13 +893,13 @@ class TestTypeMapping:
         assert fetched.nickname is None
 
     def test_id_field_autoincrement(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
-            id: int
+            id: int | None = None
             name: str
             nickname: str | None = None
 
-        # Test autoincrement of id with nullable nickname
+        # `id: int | None = None` opts into the default DB-assigned PK strategy.
         USERS = [
             {"name": "Alice", "nickname": None},  # Should generate id=1
             {"name": "Bobby", "nickname": None},  # Should generate id=2
@@ -910,10 +910,12 @@ class TestTypeMapping:
             User.objects.create(**user)
 
         users = User.objects.all()
-        assert all(u.id is not None for u in users) and len(set(users)) == 3
+        ids = [u.id for u in users]
+        assert all(pk is not None for pk in ids)
+        assert len(set(ids)) == 3
 
     def test_id_field_primary_key(self, tmp_path):
-        @database_manager(_url(tmp_path), table_name="users", key_field="id")
+        @database_registry(_url(tmp_path), table_name="users", key_field="id")
         class User(BaseModel):
             id: int
             name: str
@@ -933,7 +935,7 @@ class TestTypeMapping:
 
 class TestInMemoryDatabase:
     def test_in_memory_url_works(self):
-        @database_manager("sqlite:///:memory:", table_name="items", key_field="id")
+        @database_registry("sqlite:///:memory:", table_name="items", key_field="id")
         class Item(BaseModel):
             id: int
             name: str
@@ -944,12 +946,12 @@ class TestInMemoryDatabase:
     def test_multiple_models_on_same_memory_db(self):
         url = "sqlite:///:memory:"
 
-        @database_manager(url, table_name="cats", key_field="id")
+        @database_registry(url, table_name="cats", key_field="id")
         class Cat(BaseModel):
             id: int
             name: str
 
-        @database_manager(url, table_name="dogs", key_field="id")
+        @database_registry(url, table_name="dogs", key_field="id")
         class Dog(BaseModel):
             id: int
             name: str

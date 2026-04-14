@@ -39,15 +39,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Generic, Mapping, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from sqlalchemy import Column, MetaData, Table, delete, func, inspect, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from decorators.db.engine import dispose_engine, get_engine
-from decorators.db.errors import (
+from decorators.db.exceptions import (
     DuplicateKeyError,
+    ImmutableFieldError,
+    InvalidPrimaryKeyAssignmentError,
     InvalidQueryError,
     RecordNotFoundError,
     SchemaError,
@@ -55,6 +57,7 @@ from decorators.db.errors import (
 )
 from decorators.db.metadata import RegistryConfig
 from decorators.db.schema import SchemaManager
+from decorators.db.security import hash_password, is_password_hash
 from decorators.db.typing_utils import (
     default_database_url,
     default_table_name,
@@ -64,6 +67,8 @@ from decorators.db.typing_utils import (
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+_ORIGINAL_KEY_ATTR = "__decorators_original_key__"
+_PASSWORD_FIELD = "password"
 
 
 class DatabaseRegistry(Generic[ModelT]):
@@ -186,6 +191,7 @@ class DatabaseRegistry(Generic[ModelT]):
         Use this when you explicitly want an error if the record already exists.
         """
         instance = self.model_cls(**data)
+        self._reject_explicit_autoincrement_key(instance)
         values = self._prepare_insert_values(instance)
         stmt = self._table.insert().values(**values)
 
@@ -195,6 +201,10 @@ class DatabaseRegistry(Generic[ModelT]):
             return self._apply_generated_key(instance, result)
         except IntegrityError as exc:
             raise self._classify_integrity_error(exc) from exc
+
+    def strict_create(self, **data: Any) -> ModelT:
+        """Alias for ``create()`` for callers that prefer explicit wording."""
+        return self.create(**data)
 
     def upsert(self, instance: ModelT | None = None, /, **data: Any) -> ModelT:
         """
@@ -207,10 +217,13 @@ class DatabaseRegistry(Generic[ModelT]):
         pre-check, eliminating read-then-write race conditions.
         """
         target = instance if instance is not None else self.model_cls(**data)
+        self._assert_immutable_key(target)
         values = self._model_to_row(target)
         key_value = values.get(self.key_field)
 
         if self.config.autoincrement and key_value is None:
+            if self.config.unique_fields:
+                return self._upsert_on_unique_fields(target, values)
             return self.create(**target.model_dump())
 
         stmt = sqlite_insert(self._table).values(**values)
@@ -223,7 +236,7 @@ class DatabaseRegistry(Generic[ModelT]):
         try:
             with self._engine.begin() as conn:
                 conn.execute(stmt)
-            return target
+            return self._stamp_identity(target)
         except IntegrityError as exc:
             raise self._classify_integrity_error(exc) from exc
 
@@ -250,6 +263,7 @@ class DatabaseRegistry(Generic[ModelT]):
 
         self._assert_known_fields(criteria)
         self._assert_known_fields(updates)
+        updates = self._normalize_write_mapping(updates)
 
         stmt = update(self._table).values(**updates)
         stmt = self._apply_where(stmt, criteria)
@@ -432,7 +446,11 @@ class DatabaseRegistry(Generic[ModelT]):
 
             columns.append(Column(field_name, sa_type, **col_kwargs))
 
-        return Table(self.table_name, self._metadata, *columns)
+        table_kwargs: dict[str, Any] = {}
+        if self.config.autoincrement and self.database_url.startswith("sqlite"):
+            table_kwargs["sqlite_autoincrement"] = True
+
+        return Table(self.table_name, self._metadata, *columns, **table_kwargs)
 
     def _column_nullable(self, field_name: str, field_info: Any) -> bool:
         # The PK column for autoincrement must be nullable so INSERTs can
@@ -447,7 +465,10 @@ class DatabaseRegistry(Generic[ModelT]):
 
     def _apply_where(self, stmt: Any, criteria: Mapping[str, Any]) -> Any:
         for field, value in criteria.items():
-            stmt = stmt.where(self._table.c[field] == value)
+            if isinstance(value, (list, tuple, set, frozenset)):
+                stmt = stmt.where(self._table.c[field].in_(list(value)))
+            else:
+                stmt = stmt.where(self._table.c[field] == value)
         return stmt
 
     def _normalize_lookup(self, args: tuple[Any, ...], criteria: Mapping[str, Any]) -> dict[str, Any]:
@@ -467,17 +488,32 @@ class DatabaseRegistry(Generic[ModelT]):
                 f"Unknown field(s) {unknown!r} on model '{self.model_cls.__name__}'."
             )
 
+        for field_name, value in fields.items():
+            try:
+                adapter = TypeAdapter(model_fields[field_name].annotation)
+                if isinstance(value, (list, tuple, set, frozenset)):
+                    for item in value:
+                        adapter.validate_python(item)
+                else:
+                    adapter.validate_python(value)
+            except ValidationError as exc:
+                raise InvalidQueryError(
+                    f"Invalid value for field '{field_name}' on model "
+                    f"'{self.model_cls.__name__}': {value!r}"
+                ) from exc
+
     # ------------------------------------------------------------------
     # Private: row ↔ model conversion
     # ------------------------------------------------------------------
 
     def _row_to_model(self, row: Mapping[str, Any]) -> ModelT:
-        return self.model_cls.model_validate(dict(row))
+        return self._stamp_identity(self.model_cls.model_validate(dict(row)))
 
     def _model_to_row(self, model: ModelT) -> dict[str, Any]:
         # Use plain model_dump() (no mode='json') so Python date/datetime/Decimal
         # objects are preserved as native types.  SQLAlchemy's column types handle
         # the DB-level serialisation correctly.
+        self._normalize_model_for_write(model)
         return model.model_dump()
 
     def _prepare_insert_values(self, model: ModelT) -> dict[str, Any]:
@@ -491,8 +527,75 @@ class DatabaseRegistry(Generic[ModelT]):
         if self.config.autoincrement and getattr(instance, self.key_field, None) is None:
             pks = list(result.inserted_primary_key or ())
             if pks:
-                return instance.model_copy(update={self.key_field: pks[0]})
+                instance = instance.model_copy(update={self.key_field: pks[0]})
+        return self._stamp_identity(instance)
+
+    def _reject_explicit_autoincrement_key(self, instance: ModelT) -> None:
+        if not self.config.autoincrement:
+            return
+
+        key_value = getattr(instance, self.key_field, None)
+        if key_value is not None:
+            raise InvalidPrimaryKeyAssignmentError(
+                f"Cannot explicitly assign '{self.model_cls.__name__}.{self.key_field}' "
+                "when the primary key is database-managed."
+            )
+
+    def _assert_immutable_key(self, instance: ModelT) -> None:
+        original = getattr(instance, _ORIGINAL_KEY_ATTR, None)
+        current = getattr(instance, self.key_field, None)
+        if original is not None and current != original:
+            raise ImmutableFieldError(
+                f"Field '{self.model_cls.__name__}.{self.key_field}' is immutable once "
+                "the record has been persisted."
+            )
+
+    def _stamp_identity(self, instance: ModelT) -> ModelT:
+        object.__setattr__(instance, _ORIGINAL_KEY_ATTR, getattr(instance, self.key_field, None))
         return instance
+
+    def _upsert_on_unique_fields(self, target: ModelT, values: dict[str, Any]) -> ModelT:
+        insert_values = dict(values)
+        insert_values.pop(self.key_field, None)
+
+        stmt = sqlite_insert(self._table).values(**insert_values)
+        update_cols = {
+            key: value
+            for key, value in insert_values.items()
+            if key != self.key_field
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=list(self.config.unique_fields),
+            set_=update_cols,
+        )
+
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(stmt)
+        except IntegrityError as exc:
+            raise self._classify_integrity_error(exc) from exc
+
+        lookup = {field: insert_values[field] for field in self.config.unique_fields}
+        refreshed = self.require(**lookup)
+
+        for field_name in type(target).model_fields:
+            object.__setattr__(target, field_name, getattr(refreshed, field_name))
+        return self._stamp_identity(target)
+
+    def _normalize_model_for_write(self, model: ModelT) -> None:
+        if _PASSWORD_FIELD not in type(model).model_fields:
+            return
+
+        password = getattr(model, _PASSWORD_FIELD, None)
+        if isinstance(password, str) and password and not is_password_hash(password):
+            object.__setattr__(model, _PASSWORD_FIELD, hash_password(password))
+
+    def _normalize_write_mapping(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(values)
+        password = normalized.get(_PASSWORD_FIELD)
+        if isinstance(password, str) and password and not is_password_hash(password):
+            normalized[_PASSWORD_FIELD] = hash_password(password)
+        return normalized
 
     # ------------------------------------------------------------------
     # Private: error classification

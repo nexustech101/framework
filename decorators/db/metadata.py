@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from decorators.db.errors import ConfigurationError
+from decorators.db.exceptions import ConfigurationError
 from decorators.db.typing_utils import annotation_is_integer, field_allows_none
 
 
@@ -74,17 +74,18 @@ class RegistryConfig:
         key_field_def = fields[key_field]
         key_annotation = key_field_def.annotation
 
-        if not annotation_is_integer(key_annotation):
-            raise ConfigurationError(
-                f"autoincrement requires an integer key field. "
-                f"'{key_field}' on '{model_cls.__name__}' is not an integer type."
-            )
-        if key_field_def.is_required() and not field_allows_none(key_field_def):
-            raise ConfigurationError(
-                f"Key field '{key_field}' on '{model_cls.__name__}' uses autoincrement "
-                "(the default for integer 'id' fields) but must allow None so the database "
-                "can generate it. Change the field to: id: int | None = None"
-            )
+        if autoincrement:
+            if not annotation_is_integer(key_annotation):
+                raise ConfigurationError(
+                    f"autoincrement requires an integer key field. "
+                    f"'{key_field}' on '{model_cls.__name__}' is not an integer type."
+                )
+            if key_field_def.is_required() and not field_allows_none(key_field_def):
+                raise ConfigurationError(
+                    f"Key field '{key_field}' on '{model_cls.__name__}' uses autoincrement "
+                    "but must allow None so the database can generate it. "
+                    "Change the field to: id: int | None = None"
+                )
 
         return cls(
             model_cls=model_cls,

@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from decorators.db.errors import RelationshipError
+from decorators.db.exceptions import RelationshipError
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -287,17 +287,13 @@ class HasManyThrough(_BaseRelationship):
         related_ids = [getattr(row, self._target_key) for row in join_rows]
 
         # Step 3: fetch related records; skip any that were deleted
-        return [
-            record
-            for pk in related_ids
-            if (record := related_manager.get(pk)) is not None
-        ]
-    
-    # A simple convention: list value = IN clause
-    def _apply_where(self, stmt, criteria):
-        for field, value in criteria.items():
-            if isinstance(value, (list, tuple)):
-                stmt = stmt.where(self._table.c[field].in_(value))
-            else:
-                stmt = stmt.where(self._table.c[field] == value)
-        return stmt
+        records: list[Any] = []
+        seen: set[Any] = set()
+        for pk in related_ids:
+            if pk in seen:
+                continue
+            seen.add(pk)
+            record = related_manager.get(pk)
+            if record is not None:
+                records.append(record)
+        return records

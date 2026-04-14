@@ -166,9 +166,6 @@ class TestDIContainer:
 
 class TestTypingHelpers:
     def test_primitives(self):
-        import inspect
-        from cli_registry.utils.reflection import ParamInfo
-
         assert resolve_argparse_type(int) is int
         assert resolve_argparse_type(float) is float
         assert resolve_argparse_type(str) is str

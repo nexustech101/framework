@@ -36,9 +36,11 @@ Quick start
 
 from decorators.db.decorators import database_registry
 from decorators.db.engine import dispose_all, dispose_engine, get_engine
-from decorators.db.errors import (
+from decorators.db.exceptions import (
     ConfigurationError,
     DuplicateKeyError,
+    ImmutableFieldError,
+    InvalidPrimaryKeyAssignmentError,
     InvalidQueryError,
     MigrationError,
     ModelRegistrationError,
@@ -53,12 +55,16 @@ from decorators.db.relations import BelongsTo, HasMany, HasManyThrough
 from decorators.db.schema import SchemaManager
 from decorators.db.metadata import RegistryConfig
 from decorators.db.fields import db_field
+from decorators.db.security import hash_password, is_password_hash, verify_password
 
 __all__ = [
     # Core
     "database_registry",
     "DatabaseRegistry",
     "db_field",
+    "hash_password",
+    "is_password_hash",
+    "verify_password",
     # Relationships
     "HasMany",
     "BelongsTo",
@@ -79,6 +85,8 @@ __all__ = [
     "MigrationError",
     "RelationshipError",
     "DuplicateKeyError",
+    "InvalidPrimaryKeyAssignmentError",
+    "ImmutableFieldError",
     "UniqueConstraintError",
     "RecordNotFoundError",
     "InvalidQueryError",

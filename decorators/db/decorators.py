@@ -66,9 +66,10 @@ from typing import Any, Callable, TypeVar
 
 from pydantic import BaseModel
 
-from decorators.db.errors import ModelRegistrationError
+from decorators.db.exceptions import ModelRegistrationError
 from decorators.db.registry import DatabaseRegistry
-from decorators.db.typing_utils import annotation_is_integer
+from decorators.db.security import verify_password as verify_password_value
+from decorators.db.typing_utils import annotation_is_integer, field_allows_none
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -133,7 +134,11 @@ def database_registry(
         resolved_autoincrement = autoincrement
         if not resolved_autoincrement and key_field == "id":
             field = model_cls.model_fields.get(key_field)
-            if field is not None and annotation_is_integer(field.annotation):
+            if (
+                field is not None
+                and annotation_is_integer(field.annotation)
+                and field_allows_none(field)
+            ):
                 resolved_autoincrement = True
 
         manager = DatabaseRegistry(
@@ -238,7 +243,16 @@ def _inject_instance_methods(
         """
         return manager.refresh(self)
 
-    for method_name, method in [("save", save), ("delete", delete), ("refresh", refresh)]:
+    injected_methods = [("save", save), ("delete", delete), ("refresh", refresh)]
+
+    if "password" in model_cls.model_fields:
+        def verify_password(self: ModelT, candidate: str) -> bool:
+            """Return True when *candidate* matches this model's stored password hash."""
+            return verify_password_value(candidate, getattr(self, "password"))
+
+        injected_methods.append(("verify_password", verify_password))
+
+    for method_name, method in injected_methods:
         _safe_setattr(model_cls, method_name, method)
 
 

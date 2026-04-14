@@ -1,6 +1,4 @@
 """
-cli_registry.cli.dispatcher
-~~~~~~~~~~~~~~~~~~~~~~~~
 Resolves a parsed command name → handler, injects dependencies from the
 DI container, runs middleware hooks, and executes the handler.
 
@@ -14,6 +12,7 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from decorators.cli.exceptions import DependencyNotFoundError
 from decorators.cli.middleware import MiddlewareChain
 from decorators.cli.container import DIContainer
 from decorators.cli.registry import CommandRegistry
@@ -89,19 +88,19 @@ class Dispatcher:
         for param in get_params(handler):
             annotation = param.annotation
 
-            # Check if this parameter is a known service in the container
             is_service = (
                 annotation is not inspect.Parameter.empty
                 and isinstance(annotation, type)
                 and self._container.has(annotation)
             )
 
-            if is_service:
-                kwargs[param.name] = self._container.resolve(annotation)
-            elif param.name in cli_args:
+            if param.name in cli_args:
                 kwargs[param.name] = cli_args[param.name]
+            elif is_service:
+                kwargs[param.name] = self._container.resolve(annotation)
             elif param.has_default:
                 kwargs[param.name] = param.default
-            # else: argparse already enforced required args, so we're safe
+            else:
+                raise DependencyNotFoundError(annotation)
 
         return kwargs

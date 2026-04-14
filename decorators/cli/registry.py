@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from decorators.cli.exceptions import DuplicateCommandError, UnknownCommandError
@@ -43,6 +44,7 @@ class CommandRegistry:
 
     def __init__(self) -> None:
         self._commands: dict[str, CommandEntry] = {}
+        self._aliases: dict[str, str] = {}  # NEW
 
     # ------------------------------------------------------------------
     # Registration
@@ -75,8 +77,19 @@ class CommandRegistry:
         normalized_ops = tuple(ops or ())
 
         def decorators(fn: Callable[..., Any]) -> Callable[..., Any]:
-            if name in self._commands:
+            # Check command name collision
+            if name in self._commands or name in self._aliases:
                 raise DuplicateCommandError(name)
+
+            # Check alias collisions
+            for op in normalized_ops:
+                normalized = op.lstrip("-")
+
+                if normalized in self._commands or normalized in self._aliases:
+                    raise DuplicateCommandError(op)
+
+                self._aliases[normalized] = name
+
             self._commands[name] = CommandEntry(
                 name=name,
                 handler=fn,
@@ -99,9 +112,14 @@ class CommandRegistry:
         Raises:
             UnknownCommandError: If *name* has not been registered.
         """
-        if name not in self._commands:
-            raise UnknownCommandError(name)
-        return self._commands[name]
+        if name in self._commands:
+            return self._commands[name]
+
+        normalized = name.lstrip("-")
+        if normalized in self._aliases:
+            return self._commands[self._aliases[normalized]]
+
+        raise UnknownCommandError(name)
 
     def all(self) -> dict[str, CommandEntry]:
         """Return a shallow copy of the command map."""
@@ -109,7 +127,14 @@ class CommandRegistry:
 
     def has(self, name: str) -> bool:
         """Return True if *name* is registered."""
-        return name in self._commands
+        if name in self._commands:
+            return True
+
+        normalized = name.lstrip("-")
+        if normalized in self._aliases:
+            return True
+
+        return False
 
     def list_clis(self) -> None:
         """Print the registered commands and any configured aliases."""
@@ -122,6 +147,10 @@ class CommandRegistry:
             aliases = f" [{', '.join(entry.ops)}]" if entry.ops else ""
             summary = entry.help_text or entry.description or "(no description)"
             print(f"  {entry.name}{aliases}: {summary}")
+
+    def list_commands(self) -> None:
+        """Backward-compatible alias for :meth:`list_clis`."""
+        self.list_clis()
 
     def run(
         self,
@@ -146,11 +175,21 @@ class CommandRegistry:
 
         parser = build_parser(self, container)
         raw_argv = list(sys.argv[1:] if argv is None else argv)
-        args = parser.parse_args(self._normalize_argv(raw_argv))
+        
+        normalized = self._normalize_argv(raw_argv)
+        try:
+            args = parser.parse_args(normalized)
+        except SystemExit:
+            if normalized:
+                cmd = normalized[0]
+                matches = get_close_matches(cmd, self._commands.keys())
+                if matches:
+                    print(f"Did you mean '{matches[0]}'?")
+            raise
 
         if not args.command:
             parser.print_help()
-            return None
+            raise SystemExit(1)
 
         cli_args = {k: v for k, v in vars(args).items() if k != "command"}
         dispatcher = Dispatcher(self, container or DIContainer(), middleware)

@@ -287,6 +287,13 @@ user.save()
 user.delete()
 ```
 
+Primary-key conventions:
+
+- `id: int | None = None` gives the model a database-managed autoincrement primary key.
+- `id: int` is treated as a manual primary key and must be supplied explicitly.
+- `create(id=...)` is rejected for database-managed keys.
+- Persisted primary keys are immutable once the record exists.
+
 ### CRUD API
 
 All write operations live on the manager (`Model.objects`). Three instance methods — `save()`, `delete()`, and `refresh()` — are injected directly onto model instances for convenience.
@@ -297,7 +304,13 @@ All write operations live on the manager (`Model.objects`). Three instance metho
 # Strict insert — raises DuplicateKeyError on collision
 user = User.objects.create(name="Bob", email="bob@example.com")
 
+# Alias for callers who want explicit strict-insert wording
+user = User.objects.strict_create(name="Bob", email="bob@example.com")
+
 # Atomic upsert — INSERT … ON CONFLICT DO UPDATE, no race conditions
+user = User.objects.upsert(id=1, name="Bob", email="bob@example.com")
+
+# If no primary key is supplied, upsert falls back to configured unique fields
 user = User.objects.upsert(name="Bob", email="bob@example.com")
 
 # Bulk field update — returns refreshed records
@@ -316,6 +329,10 @@ count = User.objects.delete_where(role="inactive")
 # Upsert this instance
 user.save()
 
+# Persisted primary keys are immutable
+# user.id = 999
+# user.save()  # -> ImmutableFieldError
+
 # Delete this instance's row
 user.delete()
 
@@ -331,6 +348,9 @@ users = User.objects.all()
 
 # Filter with equality criteria
 admins = User.objects.filter(role="admin")
+
+# Filter values are validated against the declared field types
+# User.objects.filter(role=123)  # -> InvalidQueryError if the type is invalid
 
 # Pagination
 page = User.objects.filter(role="active", limit=20, offset=40)
@@ -539,6 +559,8 @@ async def create_user(user: User):
 | `ModelRegistrationError` | The decorated class is not a valid Pydantic `BaseModel` |
 | `ConfigurationError` | Decorator options reference non-existent fields or are invalid |
 | `DuplicateKeyError` | An `INSERT` collides with an existing primary key |
+| `InvalidPrimaryKeyAssignmentError` | A database-managed primary key is assigned explicitly on create |
+| `ImmutableFieldError` | A persisted primary key is mutated and then saved |
 | `UniqueConstraintError` | An `INSERT` or `UPDATE` violates a `UNIQUE` constraint |
 | `RecordNotFoundError` | `require()` finds no matching row |
 | `InvalidQueryError` | Filter criteria reference unknown fields or are malformed |
