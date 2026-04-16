@@ -1,5 +1,12 @@
 # Decorates
 
+[![PyPI version](https://img.shields.io/pypi/v/decorates)](https://pypi.org/project/decorates/)
+[![Python versions](https://img.shields.io/pypi/pyversions/decorates)](https://pypi.org/project/decorates/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CLI](https://img.shields.io/badge/module-decorates.cli-blue)](#decoratescli)
+[![DB](https://img.shields.io/badge/module-decorates.db-darkgreen)](#decoratesdb)
+[![Tests](https://img.shields.io/badge/tested-170%2B%20tests-brightgreen)](#testing)
+
 Decorates is a production-oriented toolkit for two common Python surfaces:
 
 - `decorates.cli` for module-first command registration, typed arguments, and built-in help
