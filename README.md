@@ -81,20 +81,17 @@ from decorates.db import (
 
 DB_URL = "sqlite:///shop.db"
 
-
 @database_registry(DB_URL, table_name="customers", unique_fields=["email"])
 class Customer(BaseModel):
     id: int | None = None
     name: str
     email: str
 
-
 @database_registry(DB_URL, table_name="products")
 class Product(BaseModel):
     id: int | None = None
     name: str
     price: float
-
 
 @database_registry(DB_URL, table_name="orders")
 class Order(BaseModel):
@@ -104,22 +101,18 @@ class Order(BaseModel):
     quantity: int
     total: float
 
-
 class CreateCustomer(BaseModel):
     name: str
     email: str
-
 
 class CreateProduct(BaseModel):
     name: str
     price: float
 
-
 class CreateOrder(BaseModel):
     customer_id: int
     product_id: int
     quantity: int
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -129,9 +122,7 @@ async def lifespan(app: FastAPI):
     for model in (Customer, Product, Order):
         model.objects.dispose()
 
-
 app = FastAPI(lifespan=lifespan)
-
 
 @app.post("/customers", response_model=Customer, status_code=201)
 def create_customer(payload: CreateCustomer):
@@ -170,7 +161,6 @@ def create_order(payload: CreateOrder):
         quantity=payload.quantity,
         total=product.price * payload.quantity,
     )
-
 
 @app.get("/orders/desc", response_model=list[Order])
 def list_orders_desc(limit: int = 20, offset: int = 0):  # Filter by oldest   (1, 2, 3...n)
