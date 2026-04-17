@@ -68,18 +68,44 @@ def register(
     return decorator
 
 
-def run(argv: Sequence[str] | None = None, *, print_result: bool = True) -> Any:
+def run(
+    argv: Sequence[str] | None = None,
+    *,
+    print_result: bool = True,
+    shell_prompt: str = "> ",
+    shell_input_fn: Callable[[str], str] | None = None,
+    shell_banner: bool = True,
+    shell_banner_text: str | None = None,
+    shell_title: str = "Decorates CLI",
+    shell_description: str = "Type 'help' for shell help and 'exit' to quit.",
+    shell_colors: bool | None = None,
+) -> Any:
     """Run the module-level default registry."""
 
-    return _default_registry.run(argv, print_result=print_result)
+    return _default_registry.run(
+        argv,
+        print_result=print_result,
+        shell_prompt=shell_prompt,
+        shell_input_fn=shell_input_fn,
+        shell_banner=shell_banner,
+        shell_banner_text=shell_banner_text,
+        shell_title=shell_title,
+        shell_description=shell_description,
+        shell_colors=shell_colors,
+    )
 
 
 def run_shell(
     *,
     print_result: bool = True,
-    prompt: str = "cli> ",
+    prompt: str = "> ",
     program_name: str | None = None,
     input_fn: Callable[[str], str] | None = None,
+    banner: bool = True,
+    banner_text: str | None = None,
+    shell_title: str = "Decorates CLI",
+    shell_description: str = "Type 'help' for shell help and 'exit' to quit.",
+    colors: bool | None = None,
 ) -> None:
     """Run the module-level default registry in interactive mode."""
 
@@ -88,6 +114,11 @@ def run_shell(
         prompt=prompt,
         program_name=program_name,
         input_fn=input_fn,
+        banner=banner,
+        banner_text=banner_text,
+        shell_title=shell_title,
+        shell_description=shell_description,
+        colors=colors,
     )
 
 

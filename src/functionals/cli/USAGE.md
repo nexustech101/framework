@@ -114,7 +114,12 @@ def update_todo(todo_id: int, title: str | None = None, description: str | None 
 
 
 if __name__ == "__main__":
-    cli.run()
+    cli.run(
+        shell_title="Todo Console",
+        shell_description="Manage tasks.",
+        shell_colors=None,  # auto
+        shell_banner=True,
+    )
 ```
 
 Run it as follows:
@@ -140,6 +145,57 @@ python todo.py -c 1
 python todo.py update 1 "Read two books" "Finish both novels this week"
 python todo.py update 1 --title "Read two books" --description "Finish both novels this week"
 python todo.py --update 1 --title "Read two books"
+```
+
+Or:
+
+```bash
+# Run directly for interactive mode
+python todo.py
+```
+Interactive mode:
+
+```bash
+  ______          __         ______                       __   
+ /_  __/___  ____/ /___     / ____/___  ____  _________  / /__ 
+  / / / __ \/ __  / __ \   / /   / __ \/ __ \/ ___/ __ \/ / _ \
+ / / / /_/ / /_/ / /_/ /  / /___/ /_/ / / / (__  ) /_/ / /  __/
+/_/  \____/\__,_/\____/   \____/\____/_/ /_/____/\____/_/\___/
+Todo Console
+Manage tasks.
+
+> help
+Shell builtins
+  help            Show this menu
+  help <command>  Show detailed help for a specific command
+  commands        List all registered commands
+  exit / quit     Leave interactive mode
+
+Registered commands
+  add          Add a new todo item
+  delete       Delete a todo item
+  list         List all todo items
+  complete     Mark a todo item as completed
+  update       Update a todo item
+  greet        Greet someone by name
+  create_user  Create and persist a new user
+  list-users   List all persisted users
+  get-user     Get a user by ID
+
+Tip: run 'help <command>' for full argument details.
+> help add
+add
+  Add a new todo item
+
+  Usage    usage: test.py add <title> [<description> | --description VALUE]
+  Aliases  --add, -a
+
+Arguments
+  title  (str, required)                    Title of the todo item
+  description  (str, optional, default='')  Description of the todo item
+> exit
+
+Goodbye.
 ```
 
 ## Command Decorators
@@ -205,9 +261,43 @@ python app.py run --verbose
 
 If the same argument is passed twice with different values, parsing fails.
 
+## Command Help Details
+
+Both CLI mode and interactive mode support `help <command>`.
+
+This view includes:
+
+- What the command does
+- Invocation tokens (command name + aliases)
+- Handler name
+- Usage line
+- Per-argument requirement, type, defaults, and accepted forms
+
+Example:
+
+```bash
+python todo.py help add
+```
+
+```text
+add
+  Add a new todo item
+
+  Usage    usage: test.py add <title> [<description> | --description VALUE]
+  Aliases  --add, -a
+
+Arguments
+  title  (str, required)                    Title of the todo item
+  description  (str, optional, default='')  Description of the todo item
+> 
+```
+
 ## Runtime Helpers
 
 - `cli.run(argv=None, print_result=True)` executes the default module registry.
+- `cli.run(...)` also accepts shell controls:
+  `shell_prompt`, `shell_title`, `shell_description`, `shell_banner`,
+  `shell_colors`, and `shell_input_fn`.
 - `cli.run_shell(...)` starts an interactive REPL for the default module registry.
 - `cli.list_commands()` prints registered commands and aliases.
 - `cli.reset_registry()` clears registry state (useful in tests).
@@ -226,11 +316,44 @@ python todo.py --interactive
 python todo.py -i
 ```
 
+`run()` now also accepts shell configuration so one entrypoint can handle both
+CLI argument mode and interactive mode:
+
+```python
+cli.run(
+    shell_prompt="> ",
+    shell_title="Todo Console",
+    shell_description="Manage tasks and users.",
+    shell_banner=True,
+    shell_colors=None,  # auto
+)
+```
+
 You can also call the shell directly:
 
 ```python
 if __name__ == "__main__":
     cli.run_shell()
+```
+
+`run_shell()` supports banner and color controls:
+
+```python
+cli.run_shell(
+    prompt="> ",
+    banner=True,
+    shell_title="Todo Console",
+    shell_description="Manage tasks and users.",
+    colors=None,  # auto
+)
+```
+
+`banner_text=...` is still accepted as a legacy alias for `shell_title`.
+
+For Figlet-style ASCII banners, install `pyfiglet`:
+
+```bash
+pip install pyfiglet
 ```
 
 Shell-local commands:
@@ -245,17 +368,47 @@ Example:
 
 ```text
 $ python todo.py
-Interactive mode. Type 'help' for commands, 'commands' to list registered commands, or 'exit' to quit.
-cli> commands
-Available commands:
-  add [--add, -a]: Create a todo item
-  list [--list, -l]: List todo items
-cli> add "Buy milk"
+   ____                          __            ________    ____
+  / __ \___  _________  ______ _/ /____  _____/ ____/ /   /  _/
+ / / / / _ \/ ___/ __ \/ ___/ __/ ___/ |/_/ / /   / /    / /
+/ /_/ /  __/ /__/ /_/ / /  / /_(__  )>  </ / /___/ /____/ /
+\____/\___/\___/\____/_/   \__/____/_/|_|  \____/_____/___/
+Interactive Shell
+Type 'help' for shell help and 'exit' to quit.
+> help
+Interactive Help
+================
+
+Shell Commands
+  help            Show this menu
+  help <command>  Show detailed help for one command
+  commands        List available commands
+  exit | quit     Leave interactive mode
+
+Registered Commands
+  add   Create a todo item
+        Aliases: --add, -a
+  list  List todo items
+        Aliases: --list, -l
+
+Tip: run 'help <command>' for argument-level details.
+> help add
+Command: add
+============
+Description: Create a todo item
+Usage: usage: todo.py add <title> [<description> | --description VALUE]
+Aliases: --add, -a
+
+Arguments
+  title (str, required)
+    Todo title
+    Accepted: <title> or --title VALUE
+  description (str, optional, default='')
+    Todo description
+    Accepted: <description> or --description VALUE
+> add "Buy milk"
 Added: Buy milk (ID: 1)
-cli> help add
-Command Help: add
-...
-cli> quit
+> quit
 ```
 
 ## Error Handling

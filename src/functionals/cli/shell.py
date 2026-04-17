@@ -5,17 +5,124 @@ Interactive REPL shell for ``functionals.cli`` command registries.
 from __future__ import annotations
 
 from collections.abc import Callable
+import enum
+import inspect
 import logging
+import os
 from pathlib import Path
 import shlex
 import sys
-from typing import Any
+from typing import Any, get_args, get_origin
 
 from functionals.cli.exceptions import CommandExecutionError, FrameworkError, UnknownCommandError
 from functionals.cli.parser import ParseError, parse_command_args, render_command_usage
-from functionals.cli.registry import HELP_ALIASES
+from functionals.cli.registry import HELP_ALIASES, MISSING
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Terminal color support
+# ---------------------------------------------------------------------------
+
+def _enable_windows_ansi() -> bool:
+    """Best-effort enable ANSI escape sequences on Windows terminals."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)
+        if not handle:
+            return False
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return kernel32.SetConsoleMode(handle, mode.value | 0x0004) != 0
+    except Exception:
+        return False
+
+
+def _supports_color() -> bool:
+    """Return True when the current stdout is likely to render ANSI colors."""
+    if os.getenv("NO_COLOR"):
+        return False
+    stream = getattr(sys, "stdout", None)
+    isatty = getattr(stream, "isatty", None)
+    if not callable(isatty):
+        return False
+    try:
+        tty = isatty()
+    except Exception:
+        return False
+    return tty and os.getenv("TERM", "").lower() != "dumb" and _enable_windows_ansi()
+
+
+# ---------------------------------------------------------------------------
+# ANSI palette — module-level so nothing leaks into the class namespace
+# ---------------------------------------------------------------------------
+
+class _C:
+    """Minimal ANSI escape wrappers."""
+    RESET  = "\033[0m"
+    BOLD   = "\033[1m"
+    DIM    = "\033[2m"
+    CYAN   = "\033[36m"
+    GREEN  = "\033[32m"
+    YELLOW = "\033[33m"
+    RED    = "\033[31m"
+
+    # Composed shortcuts used repeatedly
+    BOLD_CYAN  = "\033[1;36m"
+    BOLD_GREEN = "\033[1;32m"
+    BOLD_RED   = "\033[1;31m"
+
+
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
+
+def _render_banner(text: str) -> str:
+    try:
+        from pyfiglet import Figlet  # type: ignore[import-not-found]
+        rendered = Figlet(font="slant").renderText(text).rstrip()
+        if rendered:
+            return rendered
+    except Exception:
+        pass
+
+    width = max(len(text) + 8, 36)
+    bar = "─" * width
+    return f"┌{bar}┐\n│    {text.upper():<{width - 4}}│\n└{bar}┘"
+
+
+# ---------------------------------------------------------------------------
+# Argument type rendering
+# ---------------------------------------------------------------------------
+
+def _render_arg_type(annotation: Any) -> str:
+    if annotation in (inspect.Parameter.empty, Any):
+        return "str"
+    origin = get_origin(annotation)
+    if origin is not None:
+        args = ", ".join(_render_arg_type(a) for a in get_args(annotation))
+        return f"{origin.__name__}[{args}]"
+    return getattr(annotation, "__name__", None) or str(annotation)
+
+
+# ---------------------------------------------------------------------------
+# Builtin dispatch sentinel
+# ---------------------------------------------------------------------------
+
+class _BuiltinAction(enum.Enum):
+    NOT_BUILTIN = enum.auto()   # caller should dispatch to registry
+    CONTINUE    = enum.auto()   # handled; keep looping
+    EXIT        = enum.auto()   # handled; terminate the loop
+
+
+# ---------------------------------------------------------------------------
+# Shell
+# ---------------------------------------------------------------------------
 
 class InteractiveShell:
     """Run an interactive command loop against a :class:`CommandRegistry`."""
@@ -25,26 +132,40 @@ class InteractiveShell:
         registry: Any,
         *,
         print_result: bool = True,
-        prompt: str = "cli> ",
+        prompt: str = "› ",
         program_name: str | None = None,
         input_fn: Callable[[str], str] | None = None,
+        banner: bool = True,
+        title: str = "Decorates CLI",
+        description: str = "Type 'help' for shell help and 'exit' to quit.",
+        colors: bool | None = None,
     ) -> None:
-        self._registry = registry
+        self._registry     = registry
         self._print_result = print_result
-        self._prompt = prompt
+        self._prompt       = prompt
         self._program_name = program_name or Path(sys.argv[0]).name or "app.py"
-        self._input_fn = input_fn or input
+        self._input_fn     = input_fn or input
+        self._banner       = banner
+        self._title        = title
+        self._description  = description
+        self._colors       = _supports_color() if colors is None else colors
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
 
     def run(self) -> None:
-        print(
-            f"Interactive mode. Type 'help' for commands, 'commands' to list "
-            f"registered commands, or 'exit' to quit."
-        )
+        if self._banner:
+            print(self._c(_render_banner(self._title), _C.BOLD_CYAN))
+
+        print(self._c(self._title,       _C.BOLD_CYAN))
+        print(self._c(self._description, _C.DIM))
+        print()
 
         while True:
             raw = self._read_line()
             if raw is None:
-                return
+                break
 
             line = raw.strip()
             if not line:
@@ -54,20 +175,34 @@ class InteractiveShell:
             if tokens is None:
                 continue
 
-            if self._handle_shell_builtin(tokens):
-                return
+            action = self._handle_shell_builtin(tokens)
+            if action is _BuiltinAction.EXIT:
+                break
+            if action is _BuiltinAction.CONTINUE:
+                continue
 
             self._dispatch(tokens)
 
+        print()
+        print(self._c("Goodbye.", _C.DIM))
+
+    # ------------------------------------------------------------------
+    # Input
+    # ------------------------------------------------------------------
+
     def _read_line(self) -> str | None:
         try:
-            return self._input_fn(self._prompt)
+            return self._input_fn(self._c(self._prompt, _C.BOLD_GREEN))
         except EOFError:
             print()
             return None
         except KeyboardInterrupt:
             print()
             return ""
+
+    # ------------------------------------------------------------------
+    # Parsing
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _tokenize(line: str) -> list[str] | None:
@@ -77,42 +212,58 @@ class InteractiveShell:
             print(f"Error: {exc}")
             return None
 
-    def _handle_shell_builtin(self, tokens: list[str]) -> bool:
+    # ------------------------------------------------------------------
+    # Builtin commands
+    # ------------------------------------------------------------------
+
+    def _handle_shell_builtin(self, tokens: list[str]) -> _BuiltinAction:
         token = tokens[0]
+
         if token in {"exit", "quit"}:
             if len(tokens) > 1:
-                print(f"Error: '{token}' does not take arguments.")
-                return False
-            return True
+                self._error(f"'{token}' takes no arguments.")
+                return _BuiltinAction.CONTINUE
+            return _BuiltinAction.EXIT
 
         if token == "commands":
             if len(tokens) > 1:
-                print("Error: 'commands' does not take arguments.")
-                return False
-            self._registry.list_commands()
-            return False
+                self._error("'commands' takes no arguments.")
+            else:
+                print(self._render_commands_table())
+            return _BuiltinAction.CONTINUE
 
         if token in HELP_ALIASES:
             if len(tokens) > 2:
-                print("Error: help accepts at most one command name.")
-                return False
+                self._error("'help' accepts at most one command name.")
+            elif len(tokens) == 2:
+                self._print_command_help(tokens[1])
+            else:
+                print(self._render_full_help())
+            return _BuiltinAction.CONTINUE
 
-            if len(tokens) == 2:
-                target = tokens[1]
-                try:
-                    self._registry.print_help(target, program_name=self._program_name)
-                except UnknownCommandError:
-                    suggestion = self._registry.suggest(target)
-                    if suggestion:
-                        print(f"Did you mean '{suggestion}'?")
-                    else:
-                        print(f"Unknown command '{target}'.")
-                return False
+        return _BuiltinAction.NOT_BUILTIN
 
-            self._registry.print_help(program_name=self._program_name)
-            return False
+    def _print_command_help(self, target: str) -> None:
+        try:
+            entry = self._registry.get(target)
+            print(self._render_command_help(entry))
+            return
+        except UnknownCommandError:
+            pass
 
-        return False
+        # Fall back to registry for built-ins (help, --interactive, etc.)
+        try:
+            self._registry.print_help(target, program_name=self._program_name)
+        except UnknownCommandError:
+            suggestion = self._registry.suggest(target)
+            if suggestion:
+                self._hint(f"Unknown command '{target}'. Did you mean '{suggestion}'?")
+            else:
+                self._error(f"Unknown command '{target}'.")
+
+    # ------------------------------------------------------------------
+    # Registry dispatch
+    # ------------------------------------------------------------------
 
     def _dispatch(self, tokens: list[str]) -> None:
         command_token = tokens[0]
@@ -122,28 +273,134 @@ class InteractiveShell:
         except UnknownCommandError:
             suggestion = self._registry.suggest(command_token)
             if suggestion:
-                print(f"Did you mean '{suggestion}'?")
+                self._hint(f"Unknown command '{command_token}'. Did you mean '{suggestion}'?")
             else:
-                print("Unknown command")
+                self._error(f"Unknown command '{command_token}'.")
             return
 
         try:
             kwargs = parse_command_args(entry, tokens[1:])
         except ParseError as exc:
-            print(f"Error: {exc}")
-            print(render_command_usage(entry, program_name=self._program_name))
+            self._error(str(exc))
+            print(self._c(render_command_usage(entry, program_name=self._program_name), _C.DIM))
             return
 
         try:
             result = entry.handler(**kwargs)
         except FrameworkError as exc:
-            print(f"Error: {exc}")
+            self._error(str(exc))
             return
         except Exception as exc:
             logger.exception("Unhandled command failure in shell for '%s'.", entry.name)
-            wrapped = CommandExecutionError(entry.name, str(exc))
-            print(f"Error: {wrapped}")
+            self._error(str(CommandExecutionError(entry.name, str(exc))))
             return
 
         if self._print_result and result is not None:
-            print(result)
+            print(self._c(str(result), _C.GREEN))
+
+    # ------------------------------------------------------------------
+    # Rendering helpers
+    # ------------------------------------------------------------------
+
+    def _render_full_help(self) -> str:
+        shell_rows = [
+            ("help",           "Show this menu"),
+            ("help <command>", "Show detailed help for a specific command"),
+            ("commands",       "List all registered commands"),
+            ("exit / quit",    "Leave interactive mode"),
+        ]
+        return "\n".join([
+            self._section_header("Shell builtins"),
+            self._render_table(shell_rows),
+            "",
+            self._render_commands_table(header="Registered commands"),
+            "",
+            self._c("Tip: run 'help <command>' for full argument details.", _C.DIM),
+        ])
+
+    def _render_commands_table(self, *, header: str = "Available commands") -> str:
+        entries = list(self._registry.all().values())
+        if not entries:
+            return "\n".join([
+                self._section_header(header),
+                self._c("  No commands are currently registered.", _C.DIM),
+            ])
+
+        rows = [
+            (entry.name, entry.help_text or entry.description or "—")
+            for entry in entries
+        ]
+        return "\n".join([
+            self._section_header(header),
+            self._render_table(rows),
+        ])
+
+    def _render_command_help(self, entry: Any) -> str:
+        summary = entry.help_text or entry.description or "—"
+        aliases = ", ".join(entry.options) if entry.options else "none"
+        usage   = render_command_usage(entry, program_name=self._program_name)
+
+        lines = [
+            self._section_header(entry.name),
+            self._c(f"  {summary}", _C.DIM),
+            "",
+            self._render_table([("Usage", usage), ("Aliases", aliases)]),
+        ]
+
+        if not entry.arguments:
+            lines += ["", self._c("  This command takes no arguments.", _C.DIM)]
+            return "\n".join(lines)
+
+        arg_rows = []
+        for arg in entry.arguments:
+            type_name = _render_arg_type(arg.type)
+            qualifier = "required" if arg.required else "optional"
+            default   = f", default={arg.default!r}" if arg.default is not MISSING else ""
+            key       = f"{arg.name}  {self._c(f'({type_name}, {qualifier}{default})', _C.DIM)}"
+            value     = arg.help_text or "—"
+            arg_rows.append((key, value))
+
+        lines += ["", self._section_header("Arguments"), self._render_table(arg_rows)]
+        return "\n".join(lines)
+
+    def _render_table(self, rows: list[tuple[str, str]], *, indent: int = 2) -> str:
+        if not rows:
+            return ""
+        pad = " " * indent
+        # Strip ANSI codes for width measurement so alignment is based on visible chars
+        ansi_len = lambda s: len(_ANSI_ESCAPE.sub("", s))  # noqa: E731
+        col_width = max(ansi_len(k) for k, _ in rows)
+        return "\n".join(
+            f"{pad}{self._c(key, _C.CYAN)}{' ' * (col_width - ansi_len(key))}  {value}"
+            for key, value in rows
+        )
+
+    def _section_header(self, title: str) -> str:
+        return self._c(title, _C.BOLD)
+
+    # ------------------------------------------------------------------
+    # Feedback primitives
+    # ------------------------------------------------------------------
+
+    def _error(self, message: str) -> None:
+        prefix = self._c("error", _C.BOLD_RED)
+        print(f"{prefix}  {message}")
+
+    def _hint(self, message: str) -> None:
+        print(self._c(f"  → {message}", _C.YELLOW))
+
+    # ------------------------------------------------------------------
+    # Styling
+    # ------------------------------------------------------------------
+
+    def _c(self, text: str, code: str) -> str:
+        """Apply an ANSI code when colors are enabled; no-op otherwise."""
+        return f"{code}{text}{_C.RESET}" if self._colors else text
+
+
+# ---------------------------------------------------------------------------
+# ANSI escape pattern for visible-length measurement
+# ---------------------------------------------------------------------------
+
+import re
+_ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")

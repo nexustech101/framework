@@ -164,10 +164,24 @@ def test_builtin_help_supports_command_specific_view(capsys):
 
     assert cli.run(["help", "add"], print_result=False) is None
     out = capsys.readouterr().out
-    assert "Command Help: add" in out
+    assert "Command: add" in out
+    assert "Description: Add a new todo item" in out
+    assert "Usage: usage:" in out
+    assert "add <title> [<description> | --description VALUE]" in out
+    assert "Aliases: --add, -a" in out
     assert "Arguments" in out
     assert "title (str, required)" in out
     assert "description (str, optional" in out
+    assert "Accepted: <title> or --title VALUE" in out
+
+
+def test_help_for_help_builtin_does_not_suggest_help(capsys):
+    _register_todo_commands()
+
+    assert cli.run(["help", "--help"], print_result=False) is None
+    out = capsys.readouterr().out
+    assert "Built-in Command: help" in out
+    assert "Did you mean 'help'" not in out
 
 
 def test_builtin_help_unknown_command_exits_with_code_2(capsys):

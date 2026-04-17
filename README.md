@@ -67,6 +67,7 @@ python users.py add "Alice"
 python users.py --add "Bob"
 python users.py list
 python users.py --help
+python users.py help add
 python users.py --interactive
 ```
 
@@ -214,8 +215,20 @@ curl "http://localhost:8000/orders/desc?limit=20&offset=0"
 - Support positional + named argument forms (for non-bool args), with bool flags as `--flag`.
 - Command aliases are declared with `@option("-x")` / `@option("--long")`.
 - Built-in help command is always available: `help`, `--help`, and `-h`.
+- `help <command>` prints command purpose, invocation tokens, usage, and
+  argument-level invocation forms.
 - Interactive mode can be entered explicitly with `--interactive` / `-i` or
   programmatically via `functionals.cli.run_shell()`.
+- Interactive shell banners use `pyfiglet` automatically when installed,
+  with a clean built-in ASCII fallback when it is not.
+- Interactive shell output supports terminal colors (auto-detected) and uses
+  a dedicated in-shell help menu via `help`.
+- Interactive shell branding is configurable (`shell_title`,
+  `shell_description`) for custom app consoles.
+- `functionals.cli.run(...)` accepts shell options too, so one entrypoint can
+  serve both normal CLI args and interactive mode.
+  Options include `shell_prompt`, `shell_title`, `shell_description`,
+  `shell_banner`, and `shell_colors`.
 - Runtime wraps unexpected handler crashes as `CommandExecutionError` (with original exception chaining).
 - Operational logs use standard Python logging namespaces under `functionals.cli.*`.
 

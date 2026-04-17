@@ -146,6 +146,179 @@ def test_interactive_mode_supports_shell_local_commands(capsys):
     )
 
     out = capsys.readouterr().out
-    assert "Available commands:" in out
-    assert "Decorates CLI Help" in out
-    assert "Command Help: add" in out
+    assert "Registered Commands" in out
+    assert "Interactive Help" in out
+    assert "Decorates CLI Help" not in out
+    assert "Command: add" in out
+    assert "Accepted: <title> or --title VALUE" in out
+
+
+def test_interactive_mode_renders_banner_by_default(monkeypatch, capsys):
+    _register_interactive_commands()
+
+    monkeypatch.setattr("functionals.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
+
+    cli.run_shell(
+        input_fn=_input_from_lines(["exit"]),
+        print_result=False,
+    )
+
+    out = capsys.readouterr().out
+    assert "FIGLET::Decorates CLI" in out
+    assert "Decorates CLI" in out
+
+
+def test_interactive_mode_can_disable_banner(monkeypatch, capsys):
+    _register_interactive_commands()
+    monkeypatch.setattr("functionals.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
+
+    cli.run_shell(
+        input_fn=_input_from_lines(["quit"]),
+        print_result=False,
+        banner=False,
+    )
+
+    out = capsys.readouterr().out
+    assert "FIGLET::Decorates CLI" not in out
+    assert "Decorates CLI" in out
+    assert "Type 'help' for shell help and 'exit' to quit." in out
+
+
+def test_interactive_mode_uses_simple_prompt_by_default():
+    _register_interactive_commands()
+
+    prompts: list[str] = []
+
+    def _read(prompt: str) -> str:
+        prompts.append(prompt)
+        return "exit"
+
+    cli.run_shell(
+        input_fn=_read,
+        print_result=False,
+        banner=False,
+        colors=False,
+    )
+
+    assert prompts
+    assert prompts[0] == "> "
+
+
+def test_interactive_mode_can_emit_color_when_enabled(capsys):
+    _register_interactive_commands()
+
+    cli.run_shell(
+        input_fn=_input_from_lines(["quit"]),
+        print_result=False,
+        banner=False,
+        colors=True,
+    )
+
+    out = capsys.readouterr().out
+    assert "\x1b[" in out
+
+
+def test_interactive_mode_title_and_description_are_configurable(capsys):
+    _register_interactive_commands()
+
+    cli.run_shell(
+        input_fn=_input_from_lines(["quit"]),
+        print_result=False,
+        banner=False,
+        colors=False,
+        shell_title="Todo Console",
+        shell_description="Manage tasks and users.",
+    )
+
+    out = capsys.readouterr().out
+    assert "Todo Console" in out
+    assert "Manage tasks and users." in out
+
+
+def test_interactive_mode_supports_legacy_banner_text_alias(monkeypatch, capsys):
+    _register_interactive_commands()
+    monkeypatch.setattr("functionals.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
+
+    cli.run_shell(
+        input_fn=_input_from_lines(["exit"]),
+        print_result=False,
+        banner_text="Legacy Title",
+    )
+
+    out = capsys.readouterr().out
+    assert "FIGLET::Legacy Title" in out
+    assert "Legacy Title" in out
+
+
+def test_run_supports_cli_args_even_when_shell_options_are_provided():
+    _register_interactive_commands()
+
+    def _should_not_be_called(_prompt: str) -> str:
+        raise AssertionError("shell_input_fn should not be used when argv has a command")
+
+    result = cli.run(
+        ["add", "ViaArgs"],
+        print_result=False,
+        shell_input_fn=_should_not_be_called,
+        shell_title="Custom Shell Title",
+        shell_description="Custom description",
+    )
+
+    assert result == "added:ViaArgs"
+
+
+def test_run_supports_interactive_shell_with_custom_branding(monkeypatch, capsys):
+    _register_interactive_commands()
+    monkeypatch.setattr("functionals.cli.registry.sys.stdin", _TTYStdin())
+
+    cli.run(
+        [],
+        print_result=False,
+        shell_input_fn=_input_from_lines(["quit"]),
+        shell_banner=False,
+        shell_colors=False,
+        shell_title="Task Console",
+        shell_description="Operate tasks from this shell.",
+    )
+
+    out = capsys.readouterr().out
+    assert "Task Console" in out
+    assert "Operate tasks from this shell." in out
+
+
+def test_run_interactive_flag_uses_shell_customization(capsys):
+    _register_interactive_commands()
+
+    cli.run(
+        ["--interactive"],
+        print_result=False,
+        shell_input_fn=_input_from_lines(["quit"]),
+        shell_banner=False,
+        shell_colors=False,
+        shell_title="Flag Shell",
+        shell_description="Entered via flag.",
+    )
+
+    out = capsys.readouterr().out
+    assert "Flag Shell" in out
+    assert "Entered via flag." in out
+
+
+def test_interactive_help_for_help_builtin_does_not_suggest_help(capsys):
+    _register_interactive_commands()
+
+    cli.run_shell(
+        input_fn=_input_from_lines(
+            [
+                "help --help",
+                "quit",
+            ]
+        ),
+        print_result=False,
+        banner=False,
+        colors=False,
+    )
+
+    out = capsys.readouterr().out
+    assert "Built-in Command: help" in out
+    assert "Did you mean 'help'" not in out

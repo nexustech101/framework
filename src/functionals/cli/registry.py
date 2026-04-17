@@ -200,6 +200,14 @@ class CommandRegistry:
             print(self._render_global_help(program_name=program_name))
             return
 
+        normalized = self._normalize_alias(command_name)
+        if normalized in HELP_RESERVED:
+            print(self._render_builtin_help_detail(HELP_COMMAND_NAME, program_name=program_name))
+            return
+        if normalized in INTERACTIVE_RESERVED:
+            print(self._render_builtin_help_detail("interactive", program_name=program_name))
+            return
+
         entry = self.get(command_name)
         print(self._render_command_help(entry, program_name=program_name))
 
@@ -208,6 +216,13 @@ class CommandRegistry:
         argv: Sequence[str] | None = None,
         *,
         print_result: bool = True,
+        shell_prompt: str = "> ",
+        shell_input_fn: Callable[[str], str] | None = None,
+        shell_banner: bool = True,
+        shell_banner_text: str | None = None,
+        shell_title: str = "Functionals CLI",
+        shell_description: str = "Type 'help' for shell help and 'exit' to quit.",
+        shell_colors: bool | None = None,
     ) -> Any:
         from functionals.cli.parser import ParseError, parse_command_args, render_command_usage
 
@@ -215,7 +230,17 @@ class CommandRegistry:
         raw = list(sys.argv[1:] if argv is None else argv)
         if not raw:
             if self._stdin_is_interactive():
-                return self.run_shell(print_result=print_result, program_name=program_name)
+                return self.run_shell(
+                    print_result=print_result,
+                    prompt=shell_prompt,
+                    program_name=program_name,
+                    input_fn=shell_input_fn,
+                    banner=shell_banner,
+                    banner_text=shell_banner_text,
+                    shell_title=shell_title,
+                    shell_description=shell_description,
+                    colors=shell_colors,
+                )
             self.print_help(program_name=program_name)
             return None
 
@@ -224,7 +249,17 @@ class CommandRegistry:
             if len(raw) > 1:
                 print(f"Error: {token} does not take additional arguments.")
                 raise SystemExit(2)
-            return self.run_shell(print_result=print_result, program_name=program_name)
+            return self.run_shell(
+                print_result=print_result,
+                prompt=shell_prompt,
+                program_name=program_name,
+                input_fn=shell_input_fn,
+                banner=shell_banner,
+                banner_text=shell_banner_text,
+                shell_title=shell_title,
+                shell_description=shell_description,
+                colors=shell_colors,
+            )
 
         if self._is_builtin_help_token(token):
             if len(raw) > 2:
@@ -280,19 +315,29 @@ class CommandRegistry:
         self,
         *,
         print_result: bool = True,
-        prompt: str = "cli> ",
+        prompt: str = "> ",
         program_name: str | None = None,
         input_fn: Callable[[str], str] | None = None,
+        banner: bool = True,
+        banner_text: str | None = None,
+        shell_title: str = "Functionals CLI",
+        shell_description: str = "Type 'help' for shell help and 'exit' to quit.",
+        colors: bool | None = None,
     ) -> None:
         """Run this registry in interactive REPL mode."""
         from functionals.cli.shell import InteractiveShell
 
+        title = banner_text if banner_text is not None else shell_title
         shell = InteractiveShell(
             self,
             print_result=print_result,
             prompt=prompt,
             program_name=program_name,
             input_fn=input_fn,
+            banner=banner,
+            title=title,
+            description=shell_description,
+            colors=colors,
         )
         shell.run()
         return None
@@ -479,80 +524,76 @@ class CommandRegistry:
     def _render_argument_type(annotation: Any) -> str:
         if annotation in (inspect.Parameter.empty, Any):
             return "str"
-
         origin = get_origin(annotation)
         if origin is not None:
-            args = ", ".join(CommandRegistry._render_argument_type(arg) for arg in get_args(annotation))
+            args = ", ".join(
+                CommandRegistry._render_argument_type(a) for a in get_args(annotation)
+            )
             return f"{origin.__name__}[{args}]"
-
-        name = getattr(annotation, "__name__", None)
-        if name:
-            return name
-        return str(annotation)
+        return getattr(annotation, "__name__", None) or str(annotation)
 
     def _render_global_help(self, *, program_name: str | None = None) -> str:
         from functionals.cli.parser import render_command_usage
 
         prog = program_name or "app.py"
-        lines: list[str] = [
-            "Decorates CLI Help",
-            "==================",
+        lines: list[str] = []
+
+        lines += [
+            "--------------------------------",
+            "Functionals CLI Help",
+            "--------------------------------",
             "",
             "Overview",
             "  Build commands with @register, @argument, and @option decorators.",
             "",
             "Usage",
             f"  {prog} <command> [arguments]",
-            f"  {prog} {HELP_COMMAND_NAME}",
-            f"  {prog} {HELP_COMMAND_NAME} <command>",
-            f"  {prog} --help",
-            f"  {prog} -h",
-            f"  {prog} --interactive",
-            f"  {prog} -i",
+            f"  {prog} {HELP_COMMAND_NAME} [command]",
+            f"  {prog} --help | -h",
+            f"  {prog} --interactive | -i",
             "",
-            "Built-in Command",
-            f"  {HELP_COMMAND_NAME}, --help, -h",
-            "    Show this menu or detailed help for one command.",
-            "  --interactive, -i",
-            "    Start interactive REPL mode.",
+            "Built-in Commands",
+            f"  {HELP_COMMAND_NAME}, --help, -h    Show this menu or help for one command.",
+            f"  --interactive, -i               Start interactive REPL mode.",
             "",
         ]
 
         if not self._commands:
-            lines.extend(
-                [
-                    "Commands",
-                    "  No commands are currently registered.",
-                ]
-            )
+            lines += ["Commands", "  No commands are currently registered."]
             return "\n".join(lines)
 
         lines.append("Commands")
         for entry in self._commands.values():
             summary = entry.help_text or entry.description or "No description provided."
             aliases = ", ".join(entry.options) if entry.options else "none"
-            lines.append(f"  {entry.name}")
-            lines.append(f"    Summary: {summary}")
-            lines.append(f"    Aliases: {aliases}")
-            lines.append(f"    Usage: {render_command_usage(entry, program_name=prog)}")
-        lines.append("")
-        lines.append(f"Tip: run '{prog} {HELP_COMMAND_NAME} <command>' for argument-level details.")
+            lines += [
+                f"  {entry.name}",
+                f"    {summary}",
+                f"    Aliases: {aliases}",
+                f"    Usage:   {render_command_usage(entry, program_name=prog)}",
+            ]
+
+        lines += [
+            "",
+            f"Tip: run '{prog} {HELP_COMMAND_NAME} <command>' for argument-level details.",
+        ]
         return "\n".join(lines)
 
     def _render_command_help(self, entry: CommandEntry, *, program_name: str | None = None) -> str:
         from functionals.cli.parser import render_command_usage
 
-        prog = program_name or "app.py"
+        prog    = program_name or "app.py"
         summary = entry.help_text or entry.description or "No description provided."
         aliases = ", ".join(entry.options) if entry.options else "none"
 
         lines: list[str] = [
-            f"Command Help: {entry.name}",
-            "=" * (14 + len(entry.name)),
+            f"Command: {entry.name}",
+            "=" * (9 + len(entry.name)),
             "",
-            f"Summary: {summary}",
-            f"Aliases: {aliases}",
-            f"Usage: {render_command_usage(entry, program_name=prog)}",
+            f"  {summary}",
+            "",
+            f"  Usage:   {render_command_usage(entry, program_name=prog)}",
+            f"  Aliases: {aliases}",
             "",
             "Arguments",
         ]
@@ -562,16 +603,45 @@ class CommandRegistry:
             return "\n".join(lines)
 
         for arg in entry.arguments:
-            requirement = "required" if arg.required else "optional"
             type_name = self._render_argument_type(arg.type)
+            qualifier = "required" if arg.required else "optional"
+            default   = f", default={arg.default!r}" if arg.default is not MISSING else ""
             help_text = arg.help_text or "No description provided."
-            default_text = ""
-            if arg.default is not MISSING:
-                default_text = f", default={arg.default!r}"
 
-            lines.append(f"  {arg.name} ({type_name}, {requirement}{default_text})")
-            lines.append(f"    {help_text}")
+            lines += [
+                f"  {arg.name}  ({type_name}, {qualifier}{default})",
+                f"    {help_text}",
+                f"    Accepted: {self._render_argument_forms(arg)}",
+            ]
 
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_argument_forms(arg: ArgumentEntry) -> str:
+        dashed = arg.name.replace("_", "-")
+        tokens = [f"--{arg.name}", f"--{dashed}"] if dashed != arg.name else [f"--{arg.name}"]
+
+        if is_bool_flag(arg.type):
+            return "flag: " + " or ".join(tokens)
+
+        named = " or ".join(f"{token} VALUE" for token in tokens)
+        return f"<{arg.name}> or {named}"
+
+    def _render_builtin_help_detail(self, target: str, *, program_name: str | None = None) -> str:
+        prog = program_name or "app.py"
+
+        if target == HELP_COMMAND_NAME:
+            name        = "help"
+            description = "Show the global help menu or detailed help for one command."
+            usage_lines = [f"{prog} help", f"{prog} help <command>", f"{prog} --help", f"{prog} -h"]
+        else:
+            name        = "interactive"
+            description = "Start interactive REPL mode."
+            usage_lines = [f"{prog} --interactive", f"{prog} -i"]
+
+        header = f"Built-in Command: {name}"
+        lines  = [header, "=" * len(header), "", description, "", "Usage"]
+        lines += [f"  {line}" for line in usage_lines]
         return "\n".join(lines)
 
     def __len__(self) -> int:
