@@ -107,11 +107,8 @@ def update_todo(todo_id: int, title: str | None = None, description: str | None 
     if not todo:
         return f"Todo item with ID {todo_id} not found."
 
-    if title is not None:
-        todo.title = title
-    if description is not None:
-        todo.description = description
-
+    todo.title = title or ""
+    todo.description = description or ""
     todo.updated_at = NOW()
     todo.save()
     return f"Updated todo ID {todo_id}."
@@ -121,8 +118,9 @@ if __name__ == "__main__":
     cli.run(
         shell_title="Todo Console",
         shell_description="Manage tasks.",
-        shell_colors=None,  # auto
+        shell_colors=None,
         shell_banner=True,
+        shell_usage=True,  # Prints usage menu on startup
     )
 ```
 
