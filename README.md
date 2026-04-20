@@ -440,6 +440,7 @@ fx cron run-workflow deploy-workflow . --payload '{"env":"prod"}'
 
 ## Documentation
 
+- Project architecture spec: `PROJECT_SPEC.md`
 - CLI manual: `src/functionals/cli/USAGE.md`
 - DB manual: `src/functionals/db/USAGE.md`
 - FX manual: `src/functionals/fx/USAGE.md`

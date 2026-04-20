@@ -41,5 +41,7 @@ htmlcov/
 *P.md
 *spec.md
 *specs.md
+FUTURE.md
+# !PROJECT_SPEC.md
 prototype.py
 todo.py
