@@ -13,6 +13,8 @@ import hmac
 import secrets
 from typing import Any
 
+# @TODO: Consider adding support for other hashing schemes in the future + more tools for JWT auth
+
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 120_000
 _PASSWORD_PARTS = 4
