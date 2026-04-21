@@ -32,7 +32,7 @@ This framework is for teams and developers who want one coherent toolkit for bac
 ## Install
 
 ```bash
-pip install registers  # Package name is `registers`; module name is `registers`
+pip install registers
 ```
 
 Install the project manager (`fx-tool`) as a companion:
