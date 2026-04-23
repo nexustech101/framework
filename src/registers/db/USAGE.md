@@ -208,6 +208,7 @@ Default behaviors (when options omitted):
 - `table_name` defaults to snake_case pluralized model name.
 - `database_url` defaults to a SQLite file URL based on that table name.
 - `manager_attr` defaults to `objects`.
+- `auto_create=True` defers unresolved foreign-key DDL until related models are registered.
 
 Primary key policy:
 
@@ -249,6 +250,8 @@ Notes:
 - `db_field(primary_key=True)` must align with configured `key_field`.
 - Non-key autoincrement metadata is rejected.
 - `db_field(unique=True)` merges into unique-field config.
+- `db_field` metadata flags must be booleans.
+- `db_field(foreign_key=...)` must use `table.column` format.
 
 **Summary**: `db_field` is the fine-grained column metadata layer for index/unique/fk behavior beyond basic type mapping.
 
@@ -297,7 +300,7 @@ Use `field__operator=value` syntax in `filter`, `count`, `exists`, etc.
 
 Supported operators:
 
-- `eq` (default; also supports iterable -> `IN`)
+- `eq` (default; scalar values only)
 - `not`
 - `gt`, `gte`, `lt`, `lte`
 - `like`, `ilike`
@@ -334,6 +337,8 @@ Validation behavior:
 
 - Unknown fields/operators raise `InvalidQueryError`.
 - Invalid value shapes/types raise `InvalidQueryError`.
+- Iterable equality values (for example `id=[1, 2]`) are rejected; use `id__in=[1, 2]`.
+- `limit` and `offset` must be `>= 0`.
 
 **Summary**: query operators are expressive but strongly validated, making filter contracts predictable for API/service code.
 

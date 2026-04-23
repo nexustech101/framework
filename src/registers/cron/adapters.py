@@ -5,15 +5,19 @@ Deployment artifact generation and apply adapters for cron jobs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import subprocess
 import sys
 
+from registers.core.logging import log_exception
+from registers.cron.exceptions import CronAdapterError
 from registers.cron.state import CronJobRecord, cron_job_registry, parse_json, resolve_root
 
 
 SUPPORTED_APPLY_TARGETS = {"linux_cron", "windows_task_scheduler"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -172,7 +176,12 @@ def _run(argv: list[str], *, cwd: Path) -> None:
     completed = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True)
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
-        raise RuntimeError(f"Command failed ({completed.returncode}): {' '.join(argv)} {stderr}")
+        raise CronAdapterError(
+            f"Command failed ({completed.returncode}): {' '.join(argv)} {stderr}",
+            command=argv,
+            cwd=str(cwd),
+            returncode=completed.returncode,
+        )
 
 
 def apply_artifacts(*, root: str | Path = ".", target: str = "") -> AdapterReport:
@@ -197,11 +206,14 @@ def apply_artifacts(*, root: str | Path = ".", target: str = "") -> AdapterRepor
         try:
             if job.target == "linux_cron":
                 if os.name == "nt":
-                    raise RuntimeError("linux_cron apply is not supported on Windows hosts.")
+                    raise CronAdapterError("linux_cron apply is not supported on Windows hosts.", target=job.target)
                 _run(["crontab", str(path)], cwd=root_path)
             elif job.target == "windows_task_scheduler":
                 if os.name != "nt":
-                    raise RuntimeError("windows_task_scheduler apply is only supported on Windows hosts.")
+                    raise CronAdapterError(
+                        "windows_task_scheduler apply is only supported on Windows hosts.",
+                        target=job.target,
+                    )
                 _run(
                     [
                         "schtasks",
@@ -216,6 +228,15 @@ def apply_artifacts(*, root: str | Path = ".", target: str = "") -> AdapterRepor
                 )
             applied.append(job.name)
         except Exception as exc:
+            log_exception(
+                logger,
+                logging.ERROR,
+                "Failed to apply cron deployment artifact.",
+                error=exc,
+                job=job.name,
+                target=job.target,
+                path=str(path),
+            )
             errors.append(f"{job.name}: {exc}")
 
     return AdapterReport(

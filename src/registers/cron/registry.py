@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 import inspect
 from typing import Any
 
+from registers.cron.exceptions import (
+    CronLookupError,
+    CronRegistrationError,
+    CronTriggerError,
+)
 
 VALID_EVENT_KINDS = {"manual", "file_change", "webhook"}
 VALID_TARGETS = {
@@ -76,30 +81,32 @@ class CronRegistry:
 
         entry_name = (name or "").strip() or fn.__name__.replace("_", "-")
         if not entry_name:
-            raise ValueError("job() requires a non-empty job name.")
+            raise CronRegistrationError("job() requires a non-empty job name.")
         if entry_name in self._jobs:
-            raise ValueError(f"Cron job '{entry_name}' is already registered.")
+            raise CronRegistrationError(f"Cron job '{entry_name}' is already registered.", job=entry_name)
 
         normalized_target = (target or "local_async").strip().lower()
         if normalized_target not in VALID_TARGETS:
-            raise ValueError(
+            raise CronRegistrationError(
                 "target must be one of: "
-                + ", ".join(sorted(VALID_TARGETS))
+                + ", ".join(sorted(VALID_TARGETS)),
+                target=normalized_target,
             )
 
         normalized_overlap = (overlap_policy or "skip").strip().lower()
         if normalized_overlap != "skip":
-            raise ValueError("overlap_policy currently supports only 'skip'.")
+            raise CronRegistrationError("overlap_policy currently supports only 'skip'.")
 
         normalized_retry = (retry_policy or "none").strip().lower()
         if normalized_retry not in VALID_RETRY_POLICIES:
-            raise ValueError(
+            raise CronRegistrationError(
                 "retry_policy must be one of: "
-                + ", ".join(sorted(VALID_RETRY_POLICIES))
+                + ", ".join(sorted(VALID_RETRY_POLICIES)),
+                retry_policy=normalized_retry,
             )
         normalized_retry_attempts = int(retry_max_attempts)
         if normalized_retry_attempts < 0:
-            raise ValueError("retry_max_attempts must be >= 0.")
+            raise CronRegistrationError("retry_max_attempts must be >= 0.")
         if normalized_retry == "none":
             normalized_retry_attempts = 0
         elif normalized_retry_attempts == 0:
@@ -109,20 +116,20 @@ class CronRegistry:
         normalized_backoff_max = float(retry_max_backoff_seconds)
         normalized_jitter = float(retry_jitter_seconds)
         if normalized_backoff < 0:
-            raise ValueError("retry_backoff_seconds must be >= 0.")
+            raise CronRegistrationError("retry_backoff_seconds must be >= 0.")
         if normalized_backoff_max < 0:
-            raise ValueError("retry_max_backoff_seconds must be >= 0.")
+            raise CronRegistrationError("retry_max_backoff_seconds must be >= 0.")
         if normalized_backoff_max > 0 and normalized_backoff > normalized_backoff_max:
-            raise ValueError("retry_max_backoff_seconds must be >= retry_backoff_seconds.")
+            raise CronRegistrationError("retry_max_backoff_seconds must be >= retry_backoff_seconds.")
         if normalized_jitter < 0:
-            raise ValueError("retry_jitter_seconds must be >= 0.")
+            raise CronRegistrationError("retry_jitter_seconds must be >= 0.")
 
         module = getattr(fn, "__module__", "") or ""
         qualname = getattr(fn, "__qualname__", "") or fn.__name__
 
         tag_values = tuple(tag.strip() for tag in (tags or ()) if tag and tag.strip())
         if max_runtime < 0:
-            raise ValueError("max_runtime must be >= 0.")
+            raise CronRegistrationError("max_runtime must be >= 0.")
 
         entry = JobEntry(
             name=entry_name,
@@ -189,7 +196,7 @@ class CronRegistry:
 
     def get(self, name: str) -> JobEntry:
         if name not in self._jobs:
-            raise KeyError(f"No cron job registered as '{name}'.")
+            raise CronLookupError(f"No cron job registered as '{name}'.", job=name)
         return self._jobs[name]
     
     # Alias for returning an intance of this registry, for compatibility with module-level accessors
@@ -229,8 +236,9 @@ class CronRegistry:
                 added += 1
                 continue
             if existing != entry:
-                raise ValueError(
-                    f"Conflicting cron job '{name}' detected while merging registries."
+                raise CronRegistrationError(
+                    f"Conflicting cron job '{name}' detected while merging registries.",
+                    job=name,
                 )
         return added
 
@@ -253,7 +261,7 @@ class CronRegistry:
 def interval(*, seconds: int = 0, minutes: int = 0, hours: int = 0) -> TriggerSpec:
     total = int(seconds) + int(minutes) * 60 + int(hours) * 3600
     if total <= 0:
-        raise ValueError("interval() requires a positive duration.")
+        raise CronTriggerError("interval() requires a positive duration.")
     return TriggerSpec(kind="interval", config={"seconds": total})
 
 
@@ -266,19 +274,19 @@ def _validate_cron_field(field: str, *, allow_zero: bool = True) -> None:
     for part in parts:
         part = part.strip()
         if not part:
-            raise ValueError("cron() contains an empty field segment.")
+            raise CronTriggerError("cron() contains an empty field segment.")
         if not part.isdigit():
-            raise ValueError(f"Unsupported cron segment '{part}'.")
+            raise CronTriggerError(f"Unsupported cron segment '{part}'.")
         value = int(part)
         if value < (0 if allow_zero else 1):
-            raise ValueError(f"Invalid cron value '{value}'.")
+            raise CronTriggerError(f"Invalid cron value '{value}'.")
 
 
 def cron(expression: str, *, timezone: str = "local") -> TriggerSpec:
     expr = (expression or "").strip()
     fields = expr.split()
     if len(fields) != 5:
-        raise ValueError("cron() expects a 5-field expression: m h dom mon dow.")
+        raise CronTriggerError("cron() expects a 5-field expression: m h dom mon dow.")
     minute, hour, dom, mon, dow = fields
     _validate_cron_field(minute)
     _validate_cron_field(hour)
@@ -291,17 +299,17 @@ def cron(expression: str, *, timezone: str = "local") -> TriggerSpec:
 def event(kind: str, /, **config: Any) -> TriggerSpec:
     normalized = (kind or "").strip().lower()
     if normalized not in VALID_EVENT_KINDS:
-        raise ValueError(
+        raise CronTriggerError(
             "event() kind must be one of: " + ", ".join(sorted(VALID_EVENT_KINDS))
         )
     if normalized == "file_change":
         paths = config.get("paths", [])
         if not isinstance(paths, (list, tuple)) or not paths:
-            raise ValueError("file_change events require non-empty 'paths'.")
+            raise CronTriggerError("file_change events require non-empty 'paths'.")
     if normalized == "webhook":
         path = str(config.get("path", "")).strip()
         if not path.startswith("/"):
-            raise ValueError("webhook events require a 'path' starting with '/'.")
+            raise CronTriggerError("webhook events require a 'path' starting with '/'.")
     return TriggerSpec(kind=normalized, config=dict(config))
 
 

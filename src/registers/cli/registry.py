@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Sequence, get_args, get_origin
 
 from registers.cli.exceptions import CommandExecutionError, DuplicateCommandError, FrameworkError, UnknownCommandError
+from registers.core.logging import log_exception
 from registers.cli.utils.reflection import get_params
 from registers.cli.utils.typing import is_bool_flag, is_optional
 
@@ -461,7 +462,13 @@ class CommandRegistry:
         except FrameworkError:
             raise
         except Exception as exc:
-            logger.exception("Unhandled command failure in run() for '%s'.", entry.name)
+            log_exception(
+                logger,
+                logging.ERROR,
+                "Unhandled command failure in run().",
+                error=exc,
+                command=entry.name,
+            )
             raise CommandExecutionError(entry.name, str(exc)) from exc
 
         if print_result and result is not None:

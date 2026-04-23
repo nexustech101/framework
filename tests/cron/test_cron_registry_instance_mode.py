@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import registers.cron as cron_module
 from registers.cron import CronRegistry
 from registers.cron.runtime import sync_project_jobs
 from registers.cron.state import clear_state_caches
@@ -11,8 +12,10 @@ from registers.cron.state import clear_state_caches
 
 @pytest.fixture(autouse=True)
 def _reset_cron_state() -> None:
+    cron_module.reset_registry()
     clear_state_caches()
     yield
+    cron_module.reset_registry()
     clear_state_caches()
 
 
@@ -53,6 +56,7 @@ def test_sync_project_jobs_supports_explicit_registry_with_module_decorators(tmp
     assert loaded >= 2
     assert jobs == 1
     assert "default-style" in custom_registry.all()
+    assert "default-style" not in cron_module.get_registry().all()
 
 
 def test_sync_project_jobs_supports_explicit_registry_with_instance_decorators(tmp_path: Path) -> None:

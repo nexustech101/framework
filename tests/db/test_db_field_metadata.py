@@ -51,3 +51,37 @@ def test_db_field_primary_key_must_match_configured_key_field(tmp_path):
             id: int
             session_id: int = db_field(primary_key=True)
 
+
+def test_db_field_foreign_key_requires_table_column_format():
+    with pytest.raises(ConfigurationError, match="table.column"):
+        db_field(foreign_key="users")
+
+    with pytest.raises(ConfigurationError, match="table.column"):
+        db_field(foreign_key="users.")
+
+    with pytest.raises(ConfigurationError, match="table.column"):
+        db_field(foreign_key="")
+
+
+def test_db_field_rejects_non_boolean_flags():
+    with pytest.raises(ConfigurationError, match="must be a bool"):
+        db_field(index="yes")  # type: ignore[arg-type]
+
+    with pytest.raises(ConfigurationError, match="must be a bool"):
+        db_field(unique=1)  # type: ignore[arg-type]
+
+
+def test_db_field_normalizes_foreign_key_whitespace(tmp_path):
+    @database_registry(db_url(tmp_path), table_name="users", key_field="id")
+    class User(BaseModel):
+        id: int
+
+    @database_registry(db_url(tmp_path), table_name="sessions", key_field="id")
+    class Session(BaseModel):
+        id: int
+        user_id: int = db_field(foreign_key="  users.id   ")
+
+    # Creation should succeed when FK metadata is normalized.
+    User.objects.create(id=1)
+    created = Session.objects.create(id=1, user_id=1)
+    assert created.user_id == 1

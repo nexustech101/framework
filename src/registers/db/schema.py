@@ -45,7 +45,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import NoReferencedTableError, OperationalError, SQLAlchemyError
 from sqlalchemy.sql.type_api import TypeEngine
 
 from registers.db.exceptions import MigrationError, SchemaError
@@ -116,11 +116,46 @@ class SchemaManager:
     # Core DDL
     # ------------------------------------------------------------------
 
-    def create_schema(self) -> None:
-        """CREATE TABLE IF NOT EXISTS â€” always idempotent."""
+    def create_schema(
+        self,
+        *,
+        strict: bool = True,
+        include_all_metadata: bool = False,
+    ) -> bool:
+        """
+        CREATE TABLE IF NOT EXISTS.
+
+        Returns True when the create path completes. Returns False only for
+        non-strict unresolved-FK deferrals used by auto-create registration.
+        """
         try:
-            self._table.metadata.create_all(self._engine, tables=[self._table])
+            if include_all_metadata:
+                self._table.metadata.create_all(self._engine)
+            else:
+                self._table.metadata.create_all(self._engine, tables=[self._table])
             logger.debug("Created schema if needed for table '%s'.", self._table_name)
+            return True
+        except NoReferencedTableError as exc:
+            unresolved = getattr(exc, "table_name", None)
+            details = (
+                f"missing referenced table '{unresolved}'"
+                if unresolved
+                else "missing referenced table in FK definition"
+            )
+            if not strict:
+                logger.info(
+                    "Deferred schema auto-create for table '%s' due to unresolved FK (%s).",
+                    self._table_name,
+                    details,
+                )
+                return False
+            raise SchemaError(
+                f"Failed to create schema for '{self._table_name}': {details}. "
+                "Register referenced models first, then call create_schema().",
+                operation="create_schema",
+                table=self._table_name,
+                details={"unresolved_foreign_key_table": unresolved},
+            ) from exc
         except SQLAlchemyError as exc:
             logger.exception("Failed to create schema for table '%s'.", self._table_name)
             raise SchemaError(
@@ -305,3 +340,4 @@ class SchemaManager:
         except Exception:
             pass
         return False
+

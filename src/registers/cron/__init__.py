@@ -2,7 +2,17 @@
 Decorator-driven cron/scheduler tooling for Functionals.
 """
 
-from registers.cron.decorators import get_registry, job, reset_registry
+from registers.cron.decorators import get_registry, job, reset_registry, use_registry
+from registers.cron.exceptions import (
+    CronAdapterError,
+    CronError,
+    CronLookupError,
+    CronRegistrationError,
+    CronRuntimeError,
+    CronTriggerError,
+    CronWorkspaceError,
+    CronWorkspaceRuntimeError,
+)
 from registers.cron.registry import (
     CronRegistry,
     JobEntry,
@@ -24,6 +34,7 @@ __all__ = [
     "interval",
     "cron",
     "event",
+    "use_registry",
     "get_registry",
     "reset_registry",
     "sync_project_jobs",
@@ -35,4 +46,12 @@ __all__ = [
     "CronRegistry",
     "JobEntry",
     "TriggerSpec",
+    "CronError",
+    "CronRegistrationError",
+    "CronTriggerError",
+    "CronLookupError",
+    "CronRuntimeError",
+    "CronWorkspaceError",
+    "CronWorkspaceRuntimeError",
+    "CronAdapterError",
 ]

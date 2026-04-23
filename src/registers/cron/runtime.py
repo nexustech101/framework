@@ -9,14 +9,17 @@ from dataclasses import dataclass
 from datetime import datetime
 import inspect
 import json
+import logging
 from pathlib import Path
 import random
 import signal
 import time
 from typing import Any
 
+from registers.core.logging import log_exception
 from registers.cron.decorators import get_registry
 from registers.cron.discovery import load_project_jobs
+from registers.cron.exceptions import CronRuntimeError
 from registers.cron.registry import CronRegistry
 from registers.cron.state import (
     CronEventRecord,
@@ -32,6 +35,8 @@ from registers.cron.state import (
     utc_now,
     upsert_runtime,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -212,7 +217,18 @@ class CronRuntimeEngine:
         return next_payload
 
     async def run_forever(self) -> RuntimeSummary:
-        sync_project_jobs(self.root, registry=self._registry)
+        try:
+            sync_project_jobs(self.root, registry=self._registry)
+        except Exception as exc:
+            err = CronRuntimeError("Failed to sync project jobs before daemon start.")
+            log_exception(
+                logger,
+                logging.ERROR,
+                "Cron daemon startup sync failed.",
+                error=exc,
+                root=str(self.root),
+            )
+            raise err from exc
         jobs = self._jobs()
         upsert_runtime(
             root=self.root,
@@ -544,6 +560,15 @@ class CronRuntimeEngine:
             )
         except TimeoutError:
             duration = int((time.perf_counter() - begin) * 1000)
+            err = CronRuntimeError("Job execution timed out.", job=entry.name, event_id=event.id)
+            log_exception(
+                logger,
+                logging.WARNING,
+                "Cron job timed out.",
+                error=err,
+                job=entry.name,
+                event_id=event.id,
+            )
             await self._handle_execution_failure(
                 event=event,
                 entry=entry,
@@ -552,10 +577,19 @@ class CronRuntimeEngine:
                 retry=retry,
                 started_at=started_at,
                 duration_ms=duration,
-                error_message="Job execution timed out.",
+                error_message=str(err),
             )
         except Exception as exc:
             duration = int((time.perf_counter() - begin) * 1000)
+            err = CronRuntimeError("Job execution failed.", job=entry.name, event_id=event.id)
+            log_exception(
+                logger,
+                logging.ERROR,
+                "Cron job execution failed.",
+                error=exc,
+                job=entry.name,
+                event_id=event.id,
+            )
             await self._handle_execution_failure(
                 event=event,
                 entry=entry,
@@ -564,7 +598,7 @@ class CronRuntimeEngine:
                 retry=retry,
                 started_at=started_at,
                 duration_ms=duration,
-                error_message=str(exc),
+                error_message=f"{err}: {exc}",
             )
         finally:
             self._running_jobs.discard(entry.name)

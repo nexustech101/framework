@@ -6,12 +6,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
 import time
 from typing import Any
 
+from registers.core.logging import log_exception
+from registers.cron.exceptions import CronWorkspaceError, CronWorkspaceRuntimeError
 from registers.cron.state import (
     CronWorkflowRecord,
     create_event,
@@ -21,6 +24,8 @@ from registers.cron.state import (
     resolve_root,
     utc_now,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -95,11 +100,11 @@ def register_workflow(
     root_path = resolve_root(root)
     workflow_name = name.strip()
     if not workflow_name:
-        raise ValueError("workflow name is required.")
+        raise CronWorkspaceError("workflow name is required.")
 
     raw_file = file_path.strip()
     if not raw_file:
-        raise ValueError("workflow file path is required.")
+        raise CronWorkspaceError("workflow file path is required.")
     path = Path(raw_file)
     if not path.is_absolute():
         path = (root_path / path).resolve()
@@ -109,9 +114,9 @@ def register_workflow(
     linked_job = job_name.strip()
     run_command = command.strip()
     if not linked_job and not run_command:
-        raise ValueError("register_workflow requires either job_name or command.")
+        raise CronWorkspaceError("register_workflow requires either job_name or command.")
     if linked_job and run_command:
-        raise ValueError("register_workflow accepts only one execution mode: job_name or command.")
+        raise CronWorkspaceError("register_workflow accepts only one execution mode: job_name or command.")
 
     reg = cron_workflow_registry(root_path)
     workflow_key = f"{root_path}:{workflow_name}"
@@ -158,8 +163,12 @@ def _run_shell_command(command: str, *, cwd: Path) -> tuple[int, str, str]:
             last_exc = exc
             continue
     if last_exc is not None:
-        raise RuntimeError(f"No shell launcher available for command execution: {last_exc}") from last_exc
-    raise RuntimeError("No shell launcher available for command execution.")
+        err = CronWorkspaceRuntimeError(f"No shell launcher available for command execution: {last_exc}")
+        log_exception(logger, logging.ERROR, "Workflow command launcher unavailable.", error=err, cwd=str(cwd))
+        raise err from last_exc
+    err = CronWorkspaceRuntimeError("No shell launcher available for command execution.")
+    log_exception(logger, logging.ERROR, "Workflow command launcher unavailable.", error=err, cwd=str(cwd))
+    raise err
 
 
 def run_registered_workflow(
@@ -171,13 +180,13 @@ def run_registered_workflow(
     root_path = resolve_root(root)
     workflow_name = name.strip()
     if not workflow_name:
-        raise ValueError("workflow name is required.")
+        raise CronWorkspaceError("workflow name is required.")
 
     row = cron_workflow_registry(root_path).get(
         workflow_key=f"{root_path}:{workflow_name}"
     )
     if row is None:
-        raise ValueError(f"No registered workflow named '{workflow_name}' for {root_path}.")
+        raise CronWorkspaceError(f"No registered workflow named '{workflow_name}' for {root_path}.")
     if not row.enabled:
         return WorkflowExecutionResult(kind="workflow", status="skipped", message="Workflow is disabled.")
 

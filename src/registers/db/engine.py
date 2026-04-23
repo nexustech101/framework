@@ -16,11 +16,12 @@ Design decisions
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import logging
 import threading
 from typing import Any
 
-from sqlalchemy import Table, create_engine, event
+from sqlalchemy import MetaData, Table, create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
@@ -28,6 +29,29 @@ from sqlalchemy.pool import StaticPool
 _lock: threading.Lock = threading.Lock()
 _engines: dict[str, Engine] = {}
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DatabaseContext:
+    """Shared per-URL context for table metadata and table object reuse."""
+
+    database_url: str
+    engine: Engine
+    metadata: MetaData = field(default_factory=MetaData)
+    tables: dict[str, Table] = field(default_factory=dict)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+_contexts: dict[str, DatabaseContext] = {}
+
+
+def _get_or_create_engine_unlocked(database_url: str) -> Engine:
+    if database_url not in _engines:
+        logger.debug("Creating new SQLAlchemy engine for url='%s'.", database_url)
+        _engines[database_url] = _create_engine(database_url)
+    else:
+        logger.debug("Reusing cached SQLAlchemy engine for url='%s'.", database_url)
+    return _engines[database_url]
 
 
 def get_engine(database_url: str) -> Engine:
@@ -39,17 +63,31 @@ def get_engine(database_url: str) -> Engine:
     decorator calls for the same database don't race.
     """
     with _lock:
-        if database_url not in _engines:
-            logger.debug("Creating new SQLAlchemy engine for url='%s'.", database_url)
-            _engines[database_url] = _create_engine(database_url)
-        else:
-            logger.debug("Reusing cached SQLAlchemy engine for url='%s'.", database_url)
-        return _engines[database_url]
+        return _get_or_create_engine_unlocked(database_url)
+
+
+def get_db_context(database_url: str) -> DatabaseContext:
+    """
+    Return a cached :class:`DatabaseContext` for *database_url*.
+
+    Contexts share SQLAlchemy ``MetaData`` across all registered tables for the
+    same URL so foreign-key graphs can be resolved without isolated metadata.
+    """
+    with _lock:
+        context = _contexts.get(database_url)
+        if context is None:
+            context = DatabaseContext(
+                database_url=database_url,
+                engine=_get_or_create_engine_unlocked(database_url),
+            )
+            _contexts[database_url] = context
+        return context
 
 
 def dispose_engine(database_url: str) -> None:
     """Dispose the engine for *database_url* and remove it from the cache."""
     with _lock:
+        _contexts.pop(database_url, None)
         engine = _engines.pop(database_url, None)
     if engine is not None:
         logger.debug("Disposing SQLAlchemy engine for url='%s'.", database_url)
@@ -59,6 +97,7 @@ def dispose_engine(database_url: str) -> None:
 def dispose_all() -> None:
     """Dispose every cached engine. Call on application shutdown."""
     with _lock:
+        _contexts.clear()
         urls = list(_engines.keys())
     for url in urls:
         dispose_engine(url)

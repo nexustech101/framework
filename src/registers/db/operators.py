@@ -45,8 +45,6 @@ def parse_criterion(table: Any, field_expr: str, value: Any) -> Any:
     column = table.c[field_name]
 
     if operator == "eq":
-        if is_iterable_value(value):
-            return column.in_(list(value))
         return column == value
     if operator == "not":
         return column != value

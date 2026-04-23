@@ -307,8 +307,8 @@ def _inject_schema_forwarders(
 
     for name, method in [
         ("create_schema", create_schema),
-        ("drop_schema", drop_schema),
+        ("drop_schema",     drop_schema),
         ("schema_exists", schema_exists),
-        ("truncate", truncate),
+        ("truncate",           truncate),
     ]:
         _safe_setattr(model_cls, name, method)

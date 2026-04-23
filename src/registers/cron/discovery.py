@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 from types import ModuleType
 
-from registers.cron.decorators import get_registry, reset_registry
+from registers.cron.decorators import get_registry, reset_registry, use_registry
 from registers.cron.registry import CronRegistry
 
 
@@ -42,10 +42,13 @@ def _iter_module_registries(module: ModuleType) -> list[CronRegistry]:
     return registries
 
 
-def _collect_loaded_registries(module_names: list[str]) -> list[CronRegistry]:
-    default_registry = get_registry()
-    collected: list[CronRegistry] = [default_registry]
-    seen_ids = {id(default_registry)}
+def _collect_loaded_registries(
+    module_names: list[str],
+    *,
+    exclude_ids: set[int] | None = None,
+) -> list[CronRegistry]:
+    collected: list[CronRegistry] = []
+    seen_ids = set(exclude_ids or set())
 
     for module_name in module_names:
         module = sys.modules.get(module_name)
@@ -100,7 +103,8 @@ def load_project_jobs(
         for key in stale:
             sys.modules.pop(key, None)
 
-        package = importlib.import_module(package_name)
+        with use_registry(target_registry):
+            package = importlib.import_module(package_name)
         loaded += 1
         loaded_module_names.append(package_name)
         package_paths = getattr(package, "__path__", None)
@@ -118,13 +122,17 @@ def load_project_jobs(
                 # Import only modules that look like they register cron jobs.
                 if "registers.cron" not in content and "@cron.job" not in content:
                     continue
-                importlib.import_module(module_name)
+                with use_registry(target_registry):
+                    importlib.import_module(module_name)
                 loaded += 1
                 loaded_module_names.append(module_name)
     finally:
         sys.path[:] = original_sys_path
 
-    for discovered_registry in _collect_loaded_registries(loaded_module_names):
+    for discovered_registry in _collect_loaded_registries(
+        loaded_module_names,
+        exclude_ids={id(target_registry)},
+    ):
         target_registry.merge_from(discovered_registry)
 
     return package_name, loaded

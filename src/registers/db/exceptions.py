@@ -19,8 +19,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from registers.core.errors import FrameworkErrorBase
 
-class RegistryError(Exception):
+
+class RegistryError(FrameworkErrorBase):
     """Base class for all registers.db exceptions with optional structured context."""
 
     def __init__(
@@ -35,38 +37,29 @@ class RegistryError(Exception):
         context: dict[str, Any] | None = None,
         **extra: Any,
     ) -> None:
-        super().__init__(message or self.__class__.__name__)
-
         payload: dict[str, Any] = {}
-        if operation is not None:
-            payload["operation"] = operation
         if model is not None:
             payload["model"] = model
         if table is not None:
             payload["table"] = table
         if field is not None:
             payload["field"] = field
-        if details is not None:
-            payload["details"] = details
         if context:
             payload.update(context)
 
         payload.update({key: value for key, value in extra.items() if value is not None})
 
-        self.operation = operation
+        super().__init__(
+            message or self.__class__.__name__,
+            operation=operation,
+            module="db",
+            details=details,
+            context=payload,
+        )
+
         self.model = model
         self.table = table
         self.field = field
-        self.details = details
-        self.context = payload
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a serializable representation suitable for logging/APIs."""
-        return {
-            "type": type(self).__name__,
-            "message": str(self),
-            **self.context,
-        }
 
 
 class ConfigurationError(RegistryError):

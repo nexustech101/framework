@@ -4,12 +4,37 @@ Public decorator API for ``registers.cron``.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from registers.cron.registry import CronRegistry, TriggerSpec
 
 
 _default_registry = CronRegistry()  # Singleton registry instance for the module
+_active_registry: ContextVar[CronRegistry | None] = ContextVar(
+    "registers.cron.active_registry",
+    default=None,
+)
+
+
+def _resolve_registry() -> CronRegistry:
+    registry = _active_registry.get()
+    return _default_registry if registry is None else registry
+
+
+@contextmanager
+def use_registry(registry: CronRegistry):
+    """
+    Temporarily route module-level decorators to ``registry``.
+
+    This preserves module-level ergonomics while supporting isolated import/discovery.
+    """
+    token = _active_registry.set(registry)
+    try:
+        yield registry
+    finally:
+        _active_registry.reset(token)
 
 
 def job(
@@ -31,7 +56,7 @@ def job(
     """Register a decorated callable as a cron job."""
 
     def decorator(fn: Any) -> Any:
-        _default_registry.register(
+        _resolve_registry().register(
             fn,
             name=name,
             trigger=trigger,
@@ -53,7 +78,7 @@ def job(
 
 # Utility functions to access and manage the singleton registry instance
 def get_registry() -> CronRegistry:
-    return _default_registry
+    return _resolve_registry()
 
 
 # This function is primarily for testing purposes to reset the registry state
