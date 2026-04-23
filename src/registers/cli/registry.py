@@ -780,33 +780,39 @@ class CommandRegistry:
         prog = program_name or "app.py"
         summary = entry.help_text or entry.description or "No description provided."
         aliases = ", ".join(entry.options) if entry.options else "none"
+        usage = render_command_usage(entry, program_name=prog)
 
         lines: list[str] = [
-            self._section_header(f"Command: {entry.name}", use_color),
-            self._c("=" * (9 + len(entry.name)), _C.DIM, use_color),
-            f"Description: {summary}",
-            f"Usage: {render_command_usage(entry, program_name=prog)}",
-            f"Aliases: {aliases}",
+            self._section_header(entry.name, use_color),
+            self._c(f"  {summary}", _C.DIM, use_color),
             "",
-            self._section_header("Arguments", use_color),
+            self._render_help_table(
+                [("Usage", usage), ("Aliases", aliases)],
+                use_color=use_color,
+            ),
         ]
 
         if not entry.arguments:
-            lines.append("  This command does not accept arguments.")
+            lines += [
+                "",
+                self._c("  This command takes no arguments.", _C.DIM, use_color),
+            ]
             return "\n".join(lines)
 
+        argument_rows: list[tuple[str, str]] = []
         for arg in entry.arguments:
             type_name = self._render_argument_type(arg.type)
             qualifier = "required" if arg.required else "optional"
-            default   = f", default={arg.default!r}" if arg.default is not MISSING else ""
-            help_text = arg.help_text or "No description provided."
+            default_suffix = f", default={arg.default!r}" if arg.default is not MISSING else ""
+            signature = f"{arg.name} ({type_name}, {qualifier}{default_suffix})"
+            details = f"{arg.help_text or 'No description provided.'} | accepted: {self._render_argument_forms(arg)}"
+            argument_rows.append((signature, details))
 
-            lines += [
-                f"  {arg.name} ({type_name}, {qualifier}{default})",
-                f"    {help_text}",
-                f"    Accepted: {self._render_argument_forms(arg)}",
-            ]
-
+        lines += [
+            "",
+            self._section_header("Arguments", use_color),
+            self._render_help_table(argument_rows, use_color=use_color),
+        ]
         return "\n".join(lines)
 
     @staticmethod
