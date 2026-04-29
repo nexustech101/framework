@@ -81,11 +81,7 @@ def alias(
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Alias decorator for `@option(...)`."""
 
-    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-        _resolve_registry().stage_option(fn, flag, help_text=help)
-        return fn
-
-    return decorator
+    return option(flag, help=help)
 
 
 def register(
