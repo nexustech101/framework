@@ -65,7 +65,7 @@ def option(
     *,
     help: str = "",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Declare a command alias token, for example ``--add`` or ``-a``."""
+    """Declare a command option token, for example ``--add`` or ``-a``."""
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         _resolve_registry().stage_option(fn, flag, help_text=help)
@@ -79,9 +79,13 @@ def alias(
     *,
     help: str = "",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Alias decorator for `@option(...)`."""
+    """Alias decorator for `@option(...)` -> `@alias(...)`."""
 
-    return option(flag, help=help)
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        _resolve_registry().stage_alias(fn, flag, help_text=help)
+        return fn
+
+    return decorator
 
 
 def register(

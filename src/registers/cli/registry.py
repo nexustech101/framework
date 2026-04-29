@@ -67,6 +67,7 @@ class CommandEntry:
     help_text: str = ""
     description: str = ""
     options: tuple[str, ...] = field(default_factory=tuple)
+    # aliases: tuple[str, ...] = field(default_factory=tuple)
     arguments: tuple[ArgumentEntry, ...] = field(default_factory=tuple)
 
 
@@ -139,12 +140,15 @@ class CommandRegistry:
               @registry.register(...)
               @registry.argument(...)
               @registry.option(...)
+              @registry.alias(...)
               def command(...): ...
         """
         if name == "argument":
             return self._decorator_argument
         if name == "option":
             return self._decorator_option
+        if name == "alias":
+            return self._decorator_alias
         if name == "register":
             return self._decorator_register
         raise AttributeError(f"{type(self).__name__!s} object has no attribute {name!r}")
