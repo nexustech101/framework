@@ -242,8 +242,7 @@ except Exception as exc:
 def main() -> None:
     try:
         return registry.run(
-            argv,
-            print_result=print_result,
+            print_result=True,
             shell_title="User Account Admin CLI",
             shell_description="Manage user accounts and auth sessions.",
             shell_usage=True,
