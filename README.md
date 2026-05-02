@@ -173,46 +173,6 @@ if __name__ == "__main__":
     registry.run()
 ```
 
-For larger plugin-based CLIs, explicit plugin registry composition is supported:
-
-```python
-from __future__ import annotations
-
-from cli.commands.billing import cli as billing_cli
-from cli.commands.ops import cli as ops_cli
-from cli.commands.sessions import cli as sessions_cli
-from cli.commands.users import cli as users_cli
-
-from registers.cli import CommandRegistry
-
-
-registry = CommandRegistry()
-try:
-    registry.register_plugin(billing_cli)
-    registry.register_plugin(users_cli)
-    registry.register_plugin(ops_cli)
-    registry.register_plugin(sessions_cli)
-except Exception as exc:
-    raise SystemError(f"Failed to load CLI plugins: {exc}")
-
-
-def main(argv: list[str] | None = None, print_result: bool = True):
-    try:
-        return registry.run(
-            argv,
-            print_result=print_result,
-            shell_title="User Account Admin CLI",
-            shell_description="Manage user accounts and auth sessions.",
-            shell_usage=True,
-        )
-    except Exception as exc:
-        raise SystemError(f"CLI execution failed: {exc}") from exc
-
-
-if __name__ == "__main__":
-    main()
-```
-
 This pattern keeps plugin wiring deterministic and fails fast on command/alias collisions.
 
 Run it as follows:
@@ -254,6 +214,47 @@ Interactive mode:
 Think of it as the project operations companion for Registers, similar to how
 `pip` supports Python package workflows or how `npm` supports Node package workflows.
 For full `fx` usage, see the `fx-tool` docs in the separate repo.
+
+
+For larger plugin-based CLIs, explicit plugin registry composition is supported:
+
+```python
+from __future__ import annotations
+
+from cli.commands.billing import cli as billing_cli
+from cli.commands.ops import cli as ops_cli
+from cli.commands.sessions import cli as sessions_cli
+from cli.commands.users import cli as users_cli
+
+from registers.cli import CommandRegistry
+
+
+registry = CommandRegistry()
+try:
+    registry.register_plugin(billing_cli)
+    registry.register_plugin(users_cli)
+    registry.register_plugin(ops_cli)
+    registry.register_plugin(sessions_cli)
+except Exception as exc:
+    raise SystemError(f"Failed to load CLI plugins: {exc}")
+
+
+def main() -> None:
+    try:
+        return registry.run(
+            argv,
+            print_result=print_result,
+            shell_title="User Account Admin CLI",
+            shell_description="Manage user accounts and auth sessions.",
+            shell_usage=True,
+        )
+    except Exception as exc:
+        raise SystemError(f"CLI execution failed: {exc}") from exc
+
+
+if __name__ == "__main__":
+    main()
+```
 
 ### Database + FastAPI in 5 minutes
 
