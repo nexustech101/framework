@@ -173,6 +173,25 @@ if __name__ == "__main__":
     registry.run()
 ```
 
+For larger plugin-based CLIs, explicit plugin registry composition is supported:
+
+```python
+from registers.cli import CommandRegistry
+from cli.commands.billing import cli as billing_cli
+from cli.commands.users import cli as users_cli
+from cli.commands.ops import cli as ops_cli
+
+registry = CommandRegistry()
+registry.register_plugin(billing_cli)
+registry.register_plugin(users_cli)
+registry.register_plugin(ops_cli)
+
+if __name__ == "__main__":
+    registry.run()
+```
+
+This pattern keeps plugin wiring deterministic and fails fast on command/alias collisions.
+
 Run it as follows:
 
 ```bash

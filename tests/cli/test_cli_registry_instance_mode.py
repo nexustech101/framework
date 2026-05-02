@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -194,6 +195,71 @@ def test_instance_discovery_load_plugins_targets_explicit_registry(tmp_path: Pat
     assert registry.has("ping")
     assert registry.run(["ping"], print_result=False) == "pong"
     assert not cli.get_registry().has("ping")
+
+
+def test_instance_register_plugin_merges_commands_from_registry_instance() -> None:
+    host = cli.CommandRegistry()
+    users_plugin = cli.CommandRegistry()
+    ops_plugin = cli.CommandRegistry()
+
+    @users_plugin.register(name="create-user", description="Create user")
+    @users_plugin.option("--create-user")
+    @users_plugin.argument("email", type=str)
+    def create_user(email: str) -> str:
+        return f"user:{email}"
+
+    @ops_plugin.register(name="health", description="Health check")
+    @ops_plugin.option("--health")
+    def health() -> str:
+        return "ok"
+
+    assert host.register_plugin(users_plugin) == 1
+    assert host.register_plugin(ops_plugin) == 1
+
+    assert host.run(["create-user", "ada@example.com"], print_result=False) == "user:ada@example.com"
+    assert host.run(["health"], print_result=False) == "ok"
+
+
+def test_instance_register_plugin_supports_module_with_cli_registry() -> None:
+    host = cli.CommandRegistry()
+    plugin_registry = cli.CommandRegistry()
+    plugin_module = ModuleType("demo_plugin")
+    plugin_module.cli = plugin_registry
+
+    @plugin_registry.register(name="ping", description="Ping")
+    @plugin_registry.option("--ping")
+    def ping() -> str:
+        return "pong"
+
+    assert host.register_plugin(plugin_module) == 1
+    assert host.run(["ping"], print_result=False) == "pong"
+
+
+def test_instance_register_plugin_rejects_invalid_plugin_object() -> None:
+    registry = cli.CommandRegistry()
+
+    with pytest.raises(TypeError):
+        registry.register_plugin(object())
+
+
+def test_instance_register_plugin_raises_on_colliding_command_or_alias() -> None:
+    host = cli.CommandRegistry()
+    first_plugin = cli.CommandRegistry()
+    second_plugin = cli.CommandRegistry()
+
+    @first_plugin.register(name="sync", description="First")
+    @first_plugin.option("--sync")
+    def sync_first() -> str:
+        return "first"
+
+    @second_plugin.register(name="sync", description="Second")
+    @second_plugin.option("--sync2")
+    def sync_second() -> str:
+        return "second"
+
+    host.register_plugin(first_plugin)
+    with pytest.raises(DuplicateCommandError):
+        host.register_plugin(second_plugin)
 
 
 def test_instance_and_module_facades_can_coexist_without_cross_registration() -> None:

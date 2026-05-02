@@ -14,6 +14,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+from types import ModuleType
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Sequence, get_args, get_origin
 
@@ -121,6 +122,8 @@ class CommandRegistry:
             description: str = "",
             help: str = "",
         ) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
+
+        def register_plugin(self, plugin: Any) -> int: ...
 
     def __init__(self) -> None:
         self._commands: dict[str, CommandEntry] = {}
@@ -566,6 +569,34 @@ class CommandRegistry:
 
         return load_plugins(package_path, self)
 
+    def register_plugin(self, plugin: Any) -> int:
+        """
+        Merge commands from another plugin registry into this registry.
+
+        Supported plugin values:
+        - ``CommandRegistry`` instance
+        - any object exposing ``get_registry() -> CommandRegistry``
+        - module object with a ``cli`` attribute that is a ``CommandRegistry``
+
+        Returns:
+            Number of commands merged into this registry.
+        """
+        plugin_registry = self._resolve_plugin_registry(plugin)
+        if plugin_registry is self:
+            return 0
+
+        added = 0
+        for entry in plugin_registry.all().values():
+            self._assert_command_slot_available(entry.name)
+            self._assert_options_available(entry.name, entry.options)
+            self._commands[entry.name] = entry
+            for flag in entry.options:
+                normalized = self._normalize_alias(flag)
+                if normalized:
+                    self._aliases[normalized] = entry.name
+            added += 1
+        return added
+
     def dispatch(
         self,
         command: str,
@@ -589,6 +620,28 @@ class CommandRegistry:
     @staticmethod
     def _normalize_alias(token: str) -> str:
         return token.lstrip("-").strip()
+
+    @staticmethod
+    def _resolve_plugin_registry(plugin: Any) -> CommandRegistry:
+        if isinstance(plugin, CommandRegistry):
+            return plugin
+
+        getter = getattr(plugin, "get_registry", None)
+        if callable(getter):
+            resolved = getter()
+            if isinstance(resolved, CommandRegistry):
+                return resolved
+
+        if isinstance(plugin, ModuleType):
+            module_registry = getattr(plugin, "cli", None)
+            if isinstance(module_registry, CommandRegistry):
+                return module_registry
+
+        raise TypeError(
+            "register_plugin(...) expects a CommandRegistry, an object with "
+            "get_registry() returning CommandRegistry, or a module exposing "
+            "a CommandRegistry as 'cli'."
+        )
 
     def _assert_command_slot_available(self, command_name: str) -> None:
         if self._normalize_alias(command_name) in HELP_RESERVED:

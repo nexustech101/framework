@@ -443,7 +443,70 @@ cli.run(
 
 ---
 
-## 9. Plugin Discovery and Loading
+## 9. Plugin Architectures (Discovery + Explicit Composition)
+
+`registers.cli` supports two plugin patterns:
+
+1. Discovery/import loading (`load_plugins`) for package-driven plugin folders.
+2. Explicit registry composition (`register_plugin`) for directly imported plugin registries.
+
+Use explicit composition when you want strict startup control and deterministic plugin ordering.
+
+### Explicit registry composition (recommended for class-instance apps)
+
+```python
+from __future__ import annotations
+
+import json
+
+from registers.cli import CommandRegistry
+from cli.commands.billing import cli as billing_cli
+from cli.commands.ops import cli as ops_cli
+from cli.commands.sessions import cli as sessions_cli
+from cli.commands.users import cli as users_cli
+from registers.db import RecordNotFoundError
+
+
+registry = CommandRegistry()
+
+try:
+    registry.register_plugin(billing_cli)
+    registry.register_plugin(users_cli)
+    registry.register_plugin(ops_cli)
+    registry.register_plugin(sessions_cli)
+except Exception as exc:
+    raise SystemError(f"Failed to load CLI plugins: {exc}")
+
+
+def main(argv: list[str] | None = None, print_result: bool = True):
+    try:
+        return registry.run(
+            argv,
+            print_result=print_result,
+            shell_title="User Account Admin CLI",
+            shell_description="Manage user accounts and auth sessions.",
+            shell_usage=True,
+        )
+    except RecordNotFoundError as exc:
+        payload = {"error": "not_found", "detail": str(exc)}
+        if print_result:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return None
+        return json.dumps(payload, indent=2, sort_keys=True)
+```
+
+What `register_plugin(...)` accepts:
+
+- another `CommandRegistry` instance
+- any object exposing `get_registry() -> CommandRegistry`
+- a module exposing a registry as `module.cli`
+
+Collision behavior:
+
+- duplicate command names or aliases raise `DuplicateCommandError`
+- no silent overwrite occurs
+
+**Summary**: Explicit composition gives deterministic plugin wiring and clean failure behavior for startup-critical CLIs.
 
 ### Module-level loading
 
@@ -496,7 +559,7 @@ Expected output:
 pong
 ```
 
-### Instance-level loading
+### Instance-level discovery loading
 
 ```python
 import registers.cli as cli
@@ -508,7 +571,7 @@ registry.run()
 
 This loads plugins into that registry instance only.
 
-**Summary**: Plugin loading is registry-scoped, so you can intentionally control which command surface receives discovered plugin commands.
+**Summary**: Choose discovery loading for package scanning, and explicit composition for startup-controlled registry wiring.
 
 ---
 
@@ -710,6 +773,7 @@ Registry API:
 - `registry.get(...)`
 - `registry.all()`
 - `registry.load_plugins(...)`
+- `registry.register_plugin(...)`
 - `registry.dispatch(...)`
 - `registry.clear()`
 - `registry.reset_registry()`
@@ -763,10 +827,11 @@ When asked to "build a CLI tool that does X", follow this exact pattern.
 - module-level: `cli.run(...)`
 - instance-level: `registry.run(...)`
 
-4. Add plugin loading if commands are split across modules.
+4. Add plugin wiring if commands are split across modules.
 
 - module-level: `cli.load_plugins("pkg.plugins", cli.get_registry())`
 - instance-level: `registry.load_plugins("pkg.plugins")`
+- explicit instance composition: `registry.register_plugin(imported_plugin_registry)`
 
 5. Add DI/middleware only if needed.
 
@@ -1067,6 +1132,57 @@ Why this scales well for medium projects:
 - each scope can have custom shell branding and help menu
 
 **Summary**: Use Pattern A to extend one shared CLI surface quickly; use Pattern B to split large domains into isolated command surfaces with independent registries and no namespace collisions.
+
+### Pattern C: Explicit plugin registry composition (startup-controlled)
+
+Use when plugin registries are exported as `cli` objects and you want strict, explicit composition order.
+
+`src/app/app.py`:
+
+```python
+from __future__ import annotations
+
+from registers.cli import CommandRegistry
+from app.plugins.todo import cli as todo_cli
+from app.plugins.users import cli as users_cli
+from app.plugins.ops import cli as ops_cli
+
+
+registry = CommandRegistry()
+registry.register_plugin(todo_cli)
+registry.register_plugin(users_cli)
+registry.register_plugin(ops_cli)
+
+
+def main() -> None:
+    registry.run(
+        shell_title="Control Plane Console",
+        shell_description="Explicit plugin registry composition.",
+        shell_usage=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run:
+
+```bash
+python -m app add "Buy milk"
+python -m app create-user "ada@example.com"
+python -m app rotate-token "billing-api"
+```
+
+Expected output:
+
+```text
+todo-added:Buy milk
+user-created:ada@example.com
+token-rotated:billing-api
+```
+
+**Summary**: Pattern C is ideal when teams prefer explicit plugin imports and strict startup composition over package discovery.
 
 ---
 
