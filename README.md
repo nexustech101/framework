@@ -13,6 +13,8 @@
 
 **Build command systems, Pydantic-backed data services, and scheduled automation workflows with one coherent Python framework.**
 
+</div>
+
 [![PyPI version](https://img.shields.io/pypi/v/registers?color=5C6BC0\&labelColor=111827\&style=for-the-badge)](https://pypi.org/project/registers/)
 [![Python](https://img.shields.io/pypi/pyversions/registers?color=0F766E\&labelColor=111827\&style=for-the-badge)](https://pypi.org/project/registers/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-7C3AED?labelColor=111827\&style=for-the-badge)](LICENSE)
@@ -21,8 +23,6 @@
 [![Tests](https://img.shields.io/badge/Tests-290%2B-2563EB?labelColor=111827\&style=for-the-badge)](#testing)
 
 `registers.cli` · `registers.db` · `registers.cron` · `fx-tool`
-
-</div>
 
 ---
 
