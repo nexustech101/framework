@@ -6,11 +6,7 @@
           \/_/ /_/   \/_____/   \/_____/   \/_/   \/_____/     \/_/   \/_____/   \/_/ /_/   \/_____/ 
 ```
 
-<div align="center">
-
 **Build command systems, Pydantic-backed data services, and scheduled automation workflows with one coherent Python framework.**
-
-</div>
 
 [![PyPI version](https://img.shields.io/pypi/v/registers?color=5C6BC0\&labelColor=111827\&style=for-the-badge)](https://pypi.org/project/registers/)
 [![Python](https://img.shields.io/pypi/pyversions/registers?color=0F766E\&labelColor=111827\&style=for-the-badge)](https://pypi.org/project/registers/)
@@ -26,8 +22,6 @@
 ## Tags
 
 `Python Framework` `Developer Experience` `CLI Tooling` `Pydantic Persistence` `SQLAlchemy` `FastAPI` `Cron Automation` `Plugin Architecture` `Internal Tools` `Ops Workflows` `AI-Agent Friendly`
-
----
 
 ## What Is Registers?
 
