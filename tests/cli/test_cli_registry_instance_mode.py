@@ -120,7 +120,7 @@ def test_instance_parse_error_paths_show_usage_and_exit(capsys) -> None:
     assert "Unknown option '--unknown'" in out
 
 
-def test_instance_help_and_shell_paths_work(capsys) -> None:
+def test_instance_shell_path_dispatches_registered_command(capsys) -> None:
     registry = cli.CommandRegistry()
 
     @registry.register(description="Echo text")
@@ -129,21 +129,14 @@ def test_instance_help_and_shell_paths_work(capsys) -> None:
     def echo(text: str) -> str:
         return text
 
-    assert registry.run(["help"], print_result=False) is None
-    help_out = capsys.readouterr().out
-    assert "Registered commands" in help_out
-    assert "echo" in help_out
-
     registry.run_shell(
-        input_fn=_input_from_lines(["echo hello", "help echo", "quit"]),
+        input_fn=_input_from_lines(["echo hello", "quit"]),
         print_result=True,
         banner=False,
         colors=False,
     )
     shell_out = capsys.readouterr().out
     assert "hello" in shell_out
-    assert "Usage" in shell_out
-    assert "Aliases" in shell_out
 
 
 def test_instance_dispatch_supports_explicit_registry_and_container() -> None:

@@ -85,7 +85,7 @@ That consistency makes small projects faster to start and medium projects easier
 | **Registry isolation**           | Use module-level facades for small projects or owned registry instances for tests, plugins, tenants, and multi-surface apps. |
 | **Pydantic-first persistence**   | Persist Pydantic models without full ORM boilerplate while retaining SQLAlchemy-powered storage.                             |
 | **Manager-style CRUD**           | Use `Model.objects.create`, `require`, `filter`, `upsert`, `bulk_create`, `bulk_upsert`, and schema helpers.                 |
-| **CLI command runtime**          | Build scriptable CLIs, grouped operator consoles, Rich output, async commands, prompts, safety gates, plugins, DI, middleware, and dispatch workflows. |
+| **CLI command runtime**          | Build scriptable CLIs, grouped operator consoles, structured output, async commands, prompts, safety gates, plugins, DI, middleware, and dispatch workflows. |
 | **Cron/event automation**        | Define manual, interval, cron-expression, webhook, and file-change jobs with retries and runtime state.                      |
 | **Production error semantics**   | Structured exceptions, deterministic parse failures, duplicate/collision detection, and dead-letter states.                  |
 | **FastAPI-ready patterns**       | Use lifespan hooks, exception handlers, service-layer invariants, and manager-based persistence.                             |
@@ -101,13 +101,13 @@ Install Registers:
 pip install registers
 ```
 
-Install optional CLI presentation features:
+Install optional CLI shell features:
 
 ```bash
 pip install "registers[cli]"
 ```
 
-The `cli` extra enables Rich rendering and prompt_toolkit shell enhancements while preserving plain-text fallback behavior when those packages are not installed.
+The `cli` extra enables prompt_toolkit shell completion, history, and multiline input while preserving plain-text fallback behavior when it is not installed.
 
 Install the companion project manager:
 
@@ -129,76 +129,56 @@ git clone https://github.com/nexustech101/fx.git
 
 ---
 
-## `registers.cli` Expanded Runtime
+## `registers.cli`
 
-`registers.cli` now supports the full decorator-first CLI roadmap: grouped commands, nested aliases, output modes, extended argument types, async handlers, context injection, prompts, confirmations, dry runs, Rich rendering, progress/status helpers, log capture, and interactive shell transforms.
+`registers.cli` is built for practical internal command tools: quick scripts, small persisted apps, grouped operator consoles, plugin-composed admin surfaces, and larger CLIs that need context injection and async handlers.
+
+The main usage modes are:
+
+* **Quick start scripts** with module-level decorators such as `@cli.register`, `@cli.argument`, and `cli.run()`.
+* **App-level presentation** where a script can use Rich directly for a specific human-facing command while keeping the framework plain and scriptable.
+* **Grouped and plugin-based CLIs** using `CommandRegistry()`, `group(...)`, `register_plugin(...)`, aliases, `Choice(...)`, `default=...`, `dry_run()`, and `confirm(...)`.
+* **Larger internal tools** where the CLI is a thin operator surface over services, with `context_factory` handling env, region, tenant, account, or profile.
+
+Small example:
 
 ```python
-from __future__ import annotations
-
 from registers import CommandRegistry
-from registers.cli import Context, types as t
 
-cli = CommandRegistry()
-
-
-class AppContext(Context):
-    def __init__(self, env: str) -> None:
-        self.env = env
-
-
-@cli.context_factory
-def build_context(env: str = "prod") -> AppContext:
-    return AppContext(env)
-
-
-users = cli.group("users", aliases=["u"], tags=["users"])
-ops = cli.group("ops", aliases=["o"], tags=["ops"])
-
-
-@users.register(
-    "create",
-    description="Create a user account",
-    examples=['users create ada@example.com --role admin'],
-    default_output="json",
-)
-@users.argument("email", type=str, help="User email")
-@users.argument("role", type=t.Choice(["member", "admin"]), default="member")
-async def create_user(ctx: AppContext, email: str, role: str = "member") -> dict:
-    return {"env": ctx.env, "email": email, "role": role}
-
-
-@ops.register("migrate", description="Run user migration", tags=["danger"])
-@ops.dry_run()
-@ops.confirm("Run migration?", confirm_phrase="migrate")
-async def migrate(ctx: AppContext, dry_run: bool = False) -> str:
-    if dry_run:
-        return f"[dry-run] Would migrate users in {ctx.env}."
-    return f"Migrated users in {ctx.env}."
-
+@cli.register(name="add", description="Create a task")
+@cli.argument("title", type=str, help="Task title")
+@cli.argument("owner", type=str, default="platform", help="Owning team")
+def add_task(title: str, owner: str = "platform") -> dict[str, str]:
+    return {"title": title, "owner": owner}
 
 if __name__ == "__main__":
-    cli.run(
-        shell_title="Admin CLI",
-        shell_description="Operate account workflows.",
-        shell_usage=True,
-        rich=True,
-    )
+    cli.run(shell_title="Task Desk", shell_usage=True)
 ```
 
-Run:
+Grouped operator example:
 
-```bash
-python app.py --env staging users create ada@example.com --role admin
-python app.py --env staging u create ada@example.com --output json
-python app.py --env staging ops migrate --dry-run --force
-python app.py help users
-python app.py --interactive
+```python
+registry = cli.CommandRegistry()
+deploy = registry.group("deploy", aliases=["d"], description="Deployment workflows")
+
+@deploy.register("service", description="Deploy one service")
+@deploy.argument("name", type=cli.types.Choice(["api", "worker", "billing"]))
+@deploy.argument("version", type=str, default="latest")
+@deploy.dry_run()
+def deploy_service(name: str, version: str = "latest", dry_run: bool = False) -> str:
+    action = "Would deploy" if dry_run else "Deploying"
+    return f"{action} {name}:{version}"
 ```
 
-Interactive shell built-ins include `help`, `commands`, `exec`, `watch`, `pipe`, `exit`, and `quit`. Runtime output flags include `--output json`, `--output csv`, `--output rich`, `--output plain`, `--quiet`, and `--no-color`; framework aliases such as `--cli-output` are available when a command owns a conflicting argument name.
+Help displays choices and defaults, so operators can discover valid invocations without guessing:
 
-For the exhaustive CLI manual, see `src/registers/cli/USAGE.md`.
+```text
+deploy service <name: api|worker|billing> [version] [--dry-run]
+```
+
+Interactive shell built-ins are intentionally small: `help`, `commands`, `exec`, `exit`, and `quit`. Runtime output flags include `--output json`, `--output csv`, `--output plain`, `--quiet`, and `--no-color`; use `--cli-output` when a command owns an `output` argument.
+
+For the full CLI guide, including a todo app, a Rich table script, plugin composition, and larger internal-tool patterns, see `src/registers/cli/USAGE.md`.
 
 ---
 
@@ -609,7 +589,7 @@ Registers is built around explicit registries and predictable runtime boundaries
 
 | Pattern             | Use when                                            | Example                       |
 | ------------------- | --------------------------------------------------- | ----------------------------- |
-| Module-level facade | Single app surface, simple scripts, fast onboarding | `import registers.cli as cli` |
+| Module-level facade | Single app surface, simple scripts, fast onboarding | `from registers import CommandRegistry` |
 | Instance registry   | Tests, plugins, isolated scopes, explicit ownership | `cli = CommandRegistry()`     |
 
 The instance-registry pattern is the preferred production style for larger applications because it avoids global singleton coupling and makes tests/plugin boundaries explicit.

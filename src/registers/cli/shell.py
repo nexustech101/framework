@@ -123,6 +123,9 @@ def _render_banner(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _render_arg_type(annotation: Any) -> str:
+    describer = getattr(annotation, "describe", None)
+    if callable(describer):
+        return str(describer())
     if annotation in (inspect.Parameter.empty, Any):
         return "str"
     origin = get_origin(annotation)
@@ -177,8 +180,6 @@ class InteractiveShell:
         version_text: str | None = None,
         colors: bool | None = None,
         usage: bool = False,
-        rich: bool = False,
-        theme: Any | None = None,
         output: str | None = None,
         quiet: bool = False,
         verbose: bool = False,
@@ -188,6 +189,7 @@ class InteractiveShell:
         multiline: bool = False,
         log_level: str | int | None = None,
         log_panel: bool = False,
+        context: Any | None = None,
     ) -> None:
         self._registry     = registry
         self._print_result = print_result
@@ -203,8 +205,6 @@ class InteractiveShell:
         self._version_text = version_text
         self._colors       = False if no_color else (_supports_color() if colors is None else colors)
         self._usage        = usage
-        self._rich         = rich
-        self._theme        = theme
         self._output       = output
         self._quiet        = quiet
         self._verbose      = verbose
@@ -213,6 +213,7 @@ class InteractiveShell:
         self._multiline    = multiline
         self._log_level    = log_level
         self._log_panel    = log_panel
+        self._context      = context
         self._prompt_session = self._build_prompt_session() if self._using_builtin_input else None
 
     # ------------------------------------------------------------------
@@ -295,7 +296,7 @@ class InteractiveShell:
             from prompt_toolkit.history import InMemoryHistory
         except Exception:
             return None
-        words = list(self._registry.all()) + ["help", "commands", "exec", "watch", "pipe", "exit", "quit"]
+        words = list(self._registry.all()) + ["help", "commands", "exec", "exit", "quit"]
         completer = WordCompleter(words, ignore_case=True) if self._completion else None
         history = InMemoryHistory() if self._history else None
         return PromptSession(completer=completer, history=history, multiline=self._multiline)
@@ -329,14 +330,6 @@ class InteractiveShell:
             self._run_exec(command)
             return _BuiltinAction.CONTINUE
 
-        if line.startswith("watch "):
-            self._run_watch(line[len("watch "):].strip())
-            return _BuiltinAction.CONTINUE
-
-        if line.startswith("pipe "):
-            self._run_pipe(line[len("pipe "):].strip())
-            return _BuiltinAction.CONTINUE
-
         return _BuiltinAction.NOT_BUILTIN
 
     def _handle_shell_builtin(self, tokens: list[str]) -> _BuiltinAction:
@@ -356,10 +349,8 @@ class InteractiveShell:
             return _BuiltinAction.CONTINUE
 
         if token in HELP_ALIASES:
-            if len(tokens) > 2:
-                self._error("'help' accepts at most one command name.")
-            elif len(tokens) == 2:
-                self._print_command_help(tokens[1])
+            if len(tokens) > 1:
+                self._print_command_help(" ".join(tokens[1:]))
             else:
                 print(self._render_full_help())
             return _BuiltinAction.CONTINUE
@@ -427,6 +418,11 @@ class InteractiveShell:
         except UnknownCommandError:
             pass
 
+        has_group = getattr(self._registry, "_has_group", None)
+        if callable(has_group) and has_group(target):
+            print(self._render_group_help(target))
+            return
+
         # Fall back to registry for built-ins (help, --interactive, etc.)
         try:
             self._registry.print_help(
@@ -454,6 +450,10 @@ class InteractiveShell:
         try:
             entry, _command_tokens, command_args = self._registry._resolve_command_tokens(tokens)
         except UnknownCommandError:
+            has_group = getattr(self._registry, "_has_group", None)
+            if callable(has_group) and has_group(command_token):
+                print(self._render_group_help(command_token))
+                return None
             suggestion = self._registry.suggest(command_token)
             if suggestion:
                 self._hint(f"Unknown command '{command_token}'. Did you mean '{suggestion}'?")
@@ -463,6 +463,8 @@ class InteractiveShell:
 
         try:
             command_args, runtime_options = self._registry._strip_runtime_options(entry, command_args)
+            output = runtime_options.get("output", self._output or entry.default_output)
+            quiet = bool(runtime_options.get("quiet", self._quiet))
             kwargs = parse_command_args(entry, command_args, allow_missing_prompts=True)
             kwargs = self._registry._prompt_missing(entry, kwargs, input_fn=self._input_fn)
         except ParseError as exc:
@@ -474,10 +476,9 @@ class InteractiveShell:
             result = self._registry._execute_entry(
                 entry,
                 kwargs,
-                context=None,
+                context=self._context,
                 force=bool(runtime_options.get("force", False)),
                 input_fn=self._input_fn,
-                rich=self._rich,
                 log_level=self._log_level,
                 event_loop=None,
             )
@@ -489,64 +490,8 @@ class InteractiveShell:
             self._error(str(CommandExecutionError(entry.name, str(exc))))
             return None
 
-        if print_result and self._print_result and result is not None and not self._quiet:
-            self._print_command_result(entry.name, result)
-        return result
-
-    def _run_watch(self, text: str) -> None:
-        tokens = self._tokenize(text)
-        if not tokens:
-            self._error("'watch' requires a command.")
-            return
-        interval = 5.0
-        count = 1
-        command_tokens: list[str] = []
-        idx = 0
-        while idx < len(tokens):
-            token = tokens[idx]
-            if token == "--interval" and idx + 1 < len(tokens):
-                interval = float(tokens[idx + 1])
-                idx += 2
-                continue
-            if token == "--count" and idx + 1 < len(tokens):
-                count = int(tokens[idx + 1])
-                idx += 2
-                continue
-            command_tokens.append(token)
-            idx += 1
-        for iteration in range(count):
-            if iteration:
-                import time
-                time.sleep(interval)
-            self._execute_tokens(command_tokens, print_result=True)
-
-    def _run_pipe(self, text: str) -> None:
-        segments = [segment.strip() for segment in text.split("|") if segment.strip()]
-        if not segments:
-            self._error("'pipe' requires a command.")
-            return
-        tokens = self._tokenize(segments[0])
-        if not tokens:
-            return
-        result = self._execute_tokens(tokens, print_result=False)
-        for op in segments[1:]:
-            result = self._apply_pipe_op(result, op)
-        if result is not None:
-            self._print_command_result("pipe", result)
-
-    def _apply_pipe_op(self, result: Any, op: str) -> Any:
-        parts = op.split()
-        if not parts:
-            return result
-        if parts[0] == "count":
-            return len(result) if hasattr(result, "__len__") else 0
-        if parts[0] == "filter" and len(parts) == 2 and isinstance(result, list):
-            key, _, value = parts[1].partition("=")
-            return [row for row in result if isinstance(row, dict) and str(row.get(key)) == value]
-        if parts[0] == "sort" and len(parts) == 2 and isinstance(result, list):
-            key = parts[1]
-            return sorted(result, key=lambda row: str(row.get(key, "")) if isinstance(row, dict) else str(row))
-        self._error(f"Unknown pipe operation '{op}'.")
+        if print_result and self._print_result and result is not None and not quiet:
+            self._print_command_result(entry.name, result, output=output)
         return result
 
     # ------------------------------------------------------------------
@@ -559,8 +504,6 @@ class InteractiveShell:
             ("help <command>", "Show detailed help for a specific command"),
             ("commands",       "List all registered commands"),
             ("exec <command>", "Run a system command in the host shell"),
-            ("watch <command>", "Re-run a command on an interval"),
-            ("pipe <command>", "Transform structured command output"),
             ("exit / quit",    "Leave interactive mode"),
         ]
         return "\n".join([
@@ -583,15 +526,31 @@ class InteractiveShell:
         rows = [
             (entry.name, entry.help_text or entry.description or "-")
             for entry in entries
+            if " " not in entry.name
         ]
-        return "\n".join([
-            self._section_header(header),
-            self._render_table(rows),
-        ])
+
+        lines = [self._section_header(header)]
+        if rows:
+            lines.append(self._render_table(rows))
+
+        groups = getattr(self._registry, "_groups", {})
+        for group_name in groups:
+            if " " in group_name:
+                continue
+            group_rows = self._group_command_rows(group_name, entries)
+            if not group_rows:
+                continue
+            if len(lines) > 1:
+                lines.append("")
+            description = groups.get(group_name, ("", ()))[0] or f"{group_name} commands"
+            lines.append(f"  {self._c(self._format_group_label(group_name), _C.CYAN)}  {description}")
+            lines.append(self._render_table(group_rows, indent=4))
+
+        return "\n".join(lines)
 
     def _render_command_help(self, entry: Any) -> str:
         summary = entry.help_text or entry.description or "-"
-        aliases = ", ".join(entry.options) if entry.options else "none"
+        aliases = ", ".join(self._entry_aliases(entry)) or "none"
         usage   = render_command_usage(entry, program_name=self._program_name)
 
         lines = [
@@ -603,6 +562,7 @@ class InteractiveShell:
 
         if not entry.arguments:
             lines += ["", self._c("  This command takes no arguments.", _C.DIM)]
+            lines += self._render_examples(entry)
             return "\n".join(lines)
 
         arg_rows = []
@@ -615,7 +575,125 @@ class InteractiveShell:
             arg_rows.append((key, value))
 
         lines += ["", self._section_header("Arguments"), self._render_table(arg_rows)]
+        lines += self._render_examples(entry)
         return "\n".join(lines)
+
+    def _render_examples(self, entry: Any) -> list[str]:
+        examples = tuple(getattr(entry, "examples", ()) or ())
+        if not examples:
+            return []
+        return [
+            "",
+            self._section_header("Examples"),
+            "\n".join(f"  {example}" for example in examples),
+        ]
+
+    def _render_group_help(self, target: str) -> str:
+        prefix = self._registry._normalize_alias(target)
+        aliases = getattr(self._registry, "_aliases", {})
+        if prefix in aliases:
+            prefix = aliases[prefix]
+
+        lines = [self._section_header(f"Command group: {self._format_group_label(prefix)}")]
+        tree_text = self._render_group_plain(prefix)
+        if tree_text:
+            lines.append(tree_text)
+        return "\n".join(lines)
+
+    def _render_group_plain(self, prefix: str) -> str:
+        rows = self._group_command_rows(prefix, list(self._registry.all().values()))
+        return self._render_table(rows) if rows else ""
+
+    def _group_command_rows(self, group_name: str, entries: list[Any]) -> list[tuple[str, str]]:
+        rows = []
+        command_prefix = f"{group_name} "
+        for entry in entries:
+            if not entry.name.startswith(command_prefix):
+                continue
+            relative = entry.name[len(command_prefix):]
+            rows.append((self._command_signature(entry, primary=relative), entry.help_text or entry.description or "-"))
+        return rows
+
+    def _command_signature(self, entry: Any, *, primary: str | None = None) -> str:
+        parts = [primary or entry.name]
+        for arg in entry.arguments:
+            flag = f"--{arg.name.replace('_', '-')}"
+            if _render_arg_type(arg.type) == "bool":
+                parts.append(f"[{flag}]")
+            elif arg.required:
+                parts.append(f"<{self._argument_label(arg)}>")
+            else:
+                parts.append(f"[{self._argument_label(arg)}]")
+        return " ".join(parts)
+
+    @staticmethod
+    def _argument_label(arg: Any) -> str:
+        choices = getattr(arg.type, "choices", None)
+        if choices:
+            return f"{arg.name}: {'|'.join(str(choice) for choice in choices)}"
+        return arg.name
+
+    def _entry_aliases(self, entry: Any) -> tuple[str, ...]:
+        aliases: list[str] = list(getattr(entry, "options", ()))
+        option_normalized = {self._registry._normalize_alias(option) for option in aliases}
+        command_tokens = entry.name.split()
+        candidates: list[str] = []
+        for alias, target in sorted(getattr(self._registry, "_aliases", {}).items()):
+            if target != entry.name or alias in option_normalized:
+                continue
+            if " " not in alias:
+                aliases.append(alias)
+                continue
+            alias_tokens = alias.split()
+            if len(alias_tokens) == len(command_tokens):
+                candidates.append(alias)
+        if candidates:
+            max_changes = max(
+                sum(1 for left, right in zip(candidate.split(), command_tokens) if left != right)
+                for candidate in candidates
+            )
+            aliases.extend(
+                candidate
+                for candidate in candidates
+                if sum(1 for left, right in zip(candidate.split(), command_tokens) if left != right) == max_changes
+            )
+        return tuple(dict.fromkeys(aliases))
+
+    def _format_entry_label(self, entry: Any, *, primary: str | None = None) -> str:
+        names = [primary or entry.name, *self._entry_aliases(entry)]
+        return ", ".join(dict.fromkeys(names))
+
+    def _group_aliases(self, group_name: str) -> tuple[str, ...]:
+        prefix = f"{group_name} "
+        aliases: list[str] = []
+        for alias, target in sorted(getattr(self._registry, "_aliases", {}).items()):
+            if target.startswith(prefix) and " " in alias:
+                alias_group = alias.rsplit(" ", 1)[0]
+                if alias_group == group_name:
+                    continue
+                if " " not in group_name:
+                    alias_group = alias_group.split(" ", 1)[0]
+                aliases.append(alias_group)
+        candidates = tuple(dict.fromkeys(aliases))
+        if not candidates:
+            return ()
+        group_tokens = group_name.split()
+        matching = tuple(candidate for candidate in candidates if len(candidate.split()) == len(group_tokens))
+        if not matching:
+            return candidates
+        max_changes = max(
+            sum(1 for left, right in zip(candidate.split(), group_tokens) if left != right)
+            for candidate in matching
+        )
+        return tuple(
+            candidate
+            for candidate in matching
+            if sum(1 for left, right in zip(candidate.split(), group_tokens) if left != right) == max_changes
+        )
+
+    def _format_group_label(self, group_name: str, *, primary: str | None = None) -> str:
+        names = [primary or group_name, *self._group_aliases(group_name)]
+        return ", ".join(dict.fromkeys(names))
 
     def _render_table(self, rows: list[tuple[str, str]], *, indent: int = 2) -> str:
         if not rows:
@@ -632,10 +710,10 @@ class InteractiveShell:
     def _section_header(self, title: str) -> str:
         return self._c(title, _C.BOLD)
 
-    def _print_command_result(self, command_name: str, result: Any) -> None:
-        if self._output or self._rich:
+    def _print_command_result(self, command_name: str, result: Any, *, output: str | None = None) -> None:
+        if output:
             from registers.cli.ux import print_result as render_print_result
-            render_print_result(result, output=self._output, rich=self._rich)
+            render_print_result(result, output=output)
             return
         text = str(result)
         if command_name in {"run", "install", "update", "pull", "cron"} and text.startswith("FX "):

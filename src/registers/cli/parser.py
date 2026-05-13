@@ -113,21 +113,29 @@ def render_command_usage(entry: CommandEntry, program_name: str | None = None) -
     parts: list[str] = []
     for arg in entry.arguments:
         flag = f"--{arg.name.replace('_', '-')}"
+        label = _argument_label(arg)
         if _is_bool_annotation(arg.type):
             parts.append(f"[{flag}]")
             continue
 
         if arg.required:
-            parts.append(f"<{arg.name}>")
+            parts.append(f"<{label}>")
             continue
 
-        parts.append(f"[<{arg.name}> | {flag} VALUE]")
+        parts.append(f"[<{label}> | {flag} VALUE]")
 
     suffix = " ".join(parts)
     command_label = f"{program_name} {entry.name}".strip() if program_name else entry.name
     if suffix:
         return f"usage: {command_label} {suffix}"
     return f"usage: {command_label}"
+
+
+def _argument_label(arg: ArgumentEntry) -> str:
+    choices = getattr(arg.type, "choices", None)
+    if choices:
+        return f"{arg.name}: {'|'.join(str(choice) for choice in choices)}"
+    return arg.name
 
 
 def _named_argument_flags(arguments: tuple[ArgumentEntry, ...]) -> dict[str, ArgumentEntry]:

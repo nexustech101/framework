@@ -41,7 +41,7 @@ class Choice(CliType):
         raise CliTypeError(f"Allowed values: {allowed}.")
 
     def describe(self) -> str:
-        return "choice[" + "|".join(str(choice) for choice in self.choices) + "]"
+        return "choice: " + " | ".join(str(choice) for choice in self.choices)
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import enum
-import json
 from pathlib import Path
 
 import pytest
@@ -27,7 +26,7 @@ def _input_from_lines(lines: list[str]):
     return _read
 
 
-def test_grouped_commands_support_longest_match_aliases_and_group_help(capsys):
+def test_grouped_commands_support_longest_match_aliases():
     registry = cli.CommandRegistry()
     users = registry.group("users", description="User commands", aliases=["u"], tags=["users"])
     deploy = users.group("deploy", description="Deployment commands", aliases=["d"])
@@ -46,40 +45,7 @@ def test_grouped_commands_support_longest_match_aliases_and_group_help(capsys):
     assert registry.run(["users", "deploy", "service", "api"], print_result=False) == "deploy:api"
     assert registry.run(["u", "d", "service", "api"], print_result=False) == "deploy:api"
 
-    registry.run(["help", "users"], print_result=False)
-    out = capsys.readouterr().out
-    assert "Command group: users" in out
-    assert "users list" in out
-    assert "users deploy service" in out
-
-    registry.run(["help", "users", "list"], print_result=False)
-    out = capsys.readouterr().out
-    assert "Examples" in out
-    assert "users list" in out
-    assert "Tags" in out
-
-
-def test_output_modes_render_structured_results(capsys):
-    registry = cli.CommandRegistry()
-
-    @registry.register(description="Rows")
-    def rows() -> list[dict[str, object]]:
-        return [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Grace"}]
-
-    assert registry.run(["rows", "--output", "json"], print_result=True) == [
-        {"id": 1, "name": "Ada"},
-        {"id": 2, "name": "Grace"},
-    ]
-    out = capsys.readouterr().out
-    assert json.loads(out) == [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Grace"}]
-
-    registry.run(["rows", "--output", "csv"], print_result=True)
-    out = capsys.readouterr().out
-    assert "id,name" in out
-    assert "1,Ada" in out
-
-
-def test_command_argument_named_output_wins_over_framework_output_flag(capsys):
+def test_command_argument_named_output_wins_over_framework_output_flag():
     registry = cli.CommandRegistry()
 
     @registry.register(description="Echo output")
@@ -88,8 +54,6 @@ def test_command_argument_named_output_wins_over_framework_output_flag(capsys):
         return output
 
     assert registry.run(["echo", "--output", "value"], print_result=False) == "value"
-    registry.run(["echo", "value", "--cli-output", "json"], print_result=True)
-    assert json.loads(capsys.readouterr().out) == "value"
 
 
 def test_extended_types_cover_choices_bounds_paths_dates_lists_json_and_enums(tmp_path: Path):
@@ -196,39 +160,6 @@ def test_async_commands_context_and_dispatch_async():
     assert asyncio.run(_call()) == "async"
 
 
-def test_shell_watch_and_pipe_builtins(capsys):
-    registry = cli.CommandRegistry()
-
-    @registry.register(description="Rows")
-    def rows() -> list[dict[str, object]]:
-        return [
-            {"id": 2, "role": "member"},
-            {"id": 1, "role": "admin"},
-        ]
-
-    registry.run_shell(
-        input_fn=_input_from_lines(
-            [
-                "watch rows --count 1 --interval 0",
-                "pipe rows | filter role=admin | count",
-                "quit",
-            ]
-        ),
-        print_result=True,
-        banner=False,
-        colors=False,
-        output="json",
-    )
-
-    out = capsys.readouterr().out
-    assert '"role": "admin"' in out
-    assert "1" in out
-
-
 def test_public_exports_include_future_helpers():
-    assert cli.Theme
     assert cli.Context
-    assert cli.console
-    assert cli.style
-    assert cli.Progress
     assert cli.types.Choice

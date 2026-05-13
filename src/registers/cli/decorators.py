@@ -145,8 +145,6 @@ def run(
     shell_version: str | None = None,
     shell_colors: bool | None = None,
     shell_usage: bool = False,
-    rich: bool = False,
-    theme: Any | None = None,
     output: str | None = None,
     quiet: bool = False,
     verbose: bool = False,
@@ -172,8 +170,6 @@ def run(
         shell_version=shell_version,
         shell_colors=shell_colors,
         shell_usage=shell_usage,
-        rich=rich,
-        theme=theme,
         output=output,
         quiet=quiet,
         verbose=verbose,
@@ -210,8 +206,6 @@ def run_shell(
     shell_version: str | None = None,
     colors: bool | None = None,
     shell_usage: bool = False,
-    rich: bool = False,
-    theme: Any | None = None,
     output: str | None = None,
     quiet: bool = False,
     verbose: bool = False,
@@ -236,8 +230,6 @@ def run_shell(
         shell_version=shell_version,
         colors=colors,
         shell_usage=shell_usage,
-        rich=rich,
-        theme=theme,
         output=output,
         quiet=quiet,
         verbose=verbose,
@@ -277,16 +269,6 @@ def group(
 ):
     """Create a grouped command facade on the active registry."""
     return _resolve_registry().group(name, description=description, aliases=aliases, tags=tags)
-
-
-def spinner(message: str):
-    """Attach a status spinner/message to a command."""
-    return _resolve_registry().spinner(message)
-
-
-def progress(description: str = "Working"):
-    """Attach a progress helper to a command."""
-    return _resolve_registry().progress(description)
 
 
 def confirm(message: str, *, danger: bool = False, confirm_phrase: str | None = None):

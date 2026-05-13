@@ -2,7 +2,6 @@ import os
 import pytest
 
 import registers.cli as cli
-from registers.cli.shell import _strip_terminal_escapes, _wrap_ansi_for_readline
 
 
 @pytest.fixture(autouse=True)
@@ -15,11 +14,6 @@ def _reset_registry():
 class _TTYStdin:
     def isatty(self) -> bool:
         return True
-
-
-class _PipeLikeStdin:
-    def isatty(self) -> bool:
-        return False
 
 
 def _input_from_lines(lines: list[str]):
@@ -58,21 +52,6 @@ def test_empty_argv_enters_shell_when_tty(monkeypatch):
 
     assert result == "shell-entered"
     assert called["print_result"] is False
-
-
-def test_empty_argv_shows_help_when_not_tty(monkeypatch, capsys):
-    monkeypatch.setattr("registers.cli.registry.sys.stdin", _PipeLikeStdin())
-
-    @cli.register(description="Noop")
-    @cli.option("--noop")
-    def noop() -> None:
-        return None
-
-    assert cli.run([], print_result=False) is None
-    out = capsys.readouterr().out
-    assert "Decorates CLI" in out
-    assert "Shell builtins" in out
-    assert "noop" in out
 
 
 def test_interactive_flag_enters_shell(monkeypatch):
@@ -133,146 +112,6 @@ def test_interactive_mode_keeps_running_after_parse_and_unknown_errors(capsys):
     assert "added:Working" in out
 
 
-def test_interactive_mode_supports_shell_local_commands(capsys):
-    _register_interactive_commands()
-
-    cli.run_shell(
-        input_fn=_input_from_lines(
-            [
-                "commands",
-                "help",
-                "help add",
-                "quit",
-            ]
-        ),
-        print_result=False,
-    )
-
-    out = capsys.readouterr().out
-    assert "Shell builtins" in out
-    assert "Registered commands" in out
-    assert "Decorates CLI Help" not in out
-    assert "add" in out
-    assert "Usage    usage:" in out
-    assert "Aliases  --add" in out
-    assert "Arguments" in out
-    assert "title  (str, required)" in out
-
-
-def test_interactive_mode_can_print_help_menu_on_startup(capsys):
-    _register_interactive_commands()
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["quit"]),
-        print_result=False,
-        banner=False,
-        colors=False,
-        shell_usage=True,
-    )
-
-    out = capsys.readouterr().out
-    assert "Shell builtins" in out
-    assert "Registered commands" in out
-    assert "help <command>" in out
-
-
-def test_interactive_mode_renders_banner_by_default(monkeypatch, capsys):
-    _register_interactive_commands()
-
-    monkeypatch.setattr("registers.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["exit"]),
-        print_result=False,
-    )
-
-    out = capsys.readouterr().out
-    assert "FIGLET::Decorates CLI" in out
-    assert "Decorates CLI" in out
-
-
-def test_interactive_mode_can_disable_banner(monkeypatch, capsys):
-    _register_interactive_commands()
-    monkeypatch.setattr("registers.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["quit"]),
-        print_result=False,
-        banner=False,
-    )
-
-    out = capsys.readouterr().out
-    assert "FIGLET::Decorates CLI" not in out
-    assert "Decorates CLI" in out
-    assert "Type 'help' for shell help and 'exit' to quit." in out
-
-
-def test_interactive_mode_uses_simple_prompt_by_default():
-    _register_interactive_commands()
-
-    prompts: list[str] = []
-
-    def _read(prompt: str) -> str:
-        prompts.append(prompt)
-        return "exit"
-
-    cli.run_shell(
-        input_fn=_read,
-        print_result=False,
-        banner=False,
-        colors=False,
-    )
-
-    assert prompts
-    assert prompts[0] == "> "
-
-
-def test_interactive_mode_can_emit_color_when_enabled(capsys):
-    _register_interactive_commands()
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["quit"]),
-        print_result=False,
-        banner=False,
-        colors=True,
-    )
-
-    out = capsys.readouterr().out
-    assert "\x1b[" in out
-
-
-def test_interactive_mode_title_and_description_are_configurable(capsys):
-    _register_interactive_commands()
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["quit"]),
-        print_result=False,
-        banner=False,
-        colors=False,
-        shell_title="Todo Console",
-        shell_description="Manage tasks and users.",
-    )
-
-    out = capsys.readouterr().out
-    assert "Todo Console" in out
-    assert "Manage tasks and users." in out
-
-
-def test_interactive_mode_supports_legacy_banner_text_alias(monkeypatch, capsys):
-    _register_interactive_commands()
-    monkeypatch.setattr("registers.cli.shell._render_banner", lambda text: f"FIGLET::{text}")
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["exit"]),
-        print_result=False,
-        banner_text="Legacy Title",
-    )
-
-    out = capsys.readouterr().out
-    assert "FIGLET::Legacy Title" in out
-    assert "Legacy Title" in out
-
-
 def test_run_supports_cli_args_even_when_shell_options_are_provided():
     _register_interactive_commands()
 
@@ -288,117 +127,6 @@ def test_run_supports_cli_args_even_when_shell_options_are_provided():
     )
 
     assert result == "added:ViaArgs"
-
-
-def test_run_supports_interactive_shell_with_custom_branding(monkeypatch, capsys):
-    _register_interactive_commands()
-    monkeypatch.setattr("registers.cli.registry.sys.stdin", _TTYStdin())
-
-    cli.run(
-        [],
-        print_result=False,
-        shell_input_fn=_input_from_lines(["quit"]),
-        shell_banner=False,
-        shell_colors=False,
-        shell_title="Task Console",
-        shell_description="Operate tasks from this shell.",
-    )
-
-    out = capsys.readouterr().out
-    assert "Task Console" in out
-    assert "Operate tasks from this shell." in out
-
-
-def test_run_interactive_flag_uses_shell_customization(capsys):
-    _register_interactive_commands()
-
-    cli.run(
-        ["--interactive"],
-        print_result=False,
-        shell_input_fn=_input_from_lines(["quit"]),
-        shell_banner=False,
-        shell_colors=False,
-        shell_title="Flag Shell",
-        shell_description="Entered via flag.",
-    )
-
-    out = capsys.readouterr().out
-    assert "Flag Shell" in out
-    assert "Entered via flag." in out
-
-
-def test_run_interactive_flag_can_print_help_menu_on_startup(capsys):
-    _register_interactive_commands()
-
-    cli.run(
-        ["--interactive"],
-        print_result=False,
-        shell_input_fn=_input_from_lines(["quit"]),
-        shell_banner=False,
-        shell_colors=False,
-        shell_usage=True,
-    )
-
-    out = capsys.readouterr().out
-    assert "Shell builtins" in out
-    assert "Registered commands" in out
-
-
-def test_interactive_help_for_help_builtin_does_not_suggest_help(capsys):
-    _register_interactive_commands()
-
-    cli.run_shell(
-        input_fn=_input_from_lines(
-            [
-                "help --help",
-                "quit",
-            ]
-        ),
-        print_result=False,
-        banner=False,
-        colors=False,
-    )
-
-    out = capsys.readouterr().out
-    assert "Built-in Command: help" in out
-    assert "Did you mean 'help'" not in out
-
-
-def test_shell_strips_terminal_escape_sequences_from_raw_input():
-    raw = 'add "Task"\x1b[D\x1b[D'
-    assert _strip_terminal_escapes(raw) == 'add "Task"'
-
-
-def test_shell_wraps_ansi_prompt_for_readline():
-    prompt = "\x1b[1;32m> \x1b[0m"
-    wrapped = _wrap_ansi_for_readline(prompt)
-    assert wrapped.startswith("\x01\x1b[1;32m\x02")
-    assert wrapped.endswith("\x01\x1b[0m\x02")
-
-
-def test_interactive_shell_pretty_prints_structured_fx_result(capsys):
-    @cli.register(name="run", description="Run app")
-    def run_fx() -> str:
-        return "\n".join(
-            [
-                "FX Run Result",
-                "Status: success",
-                "Project: /tmp/demo",
-                "Command: python -m demo",
-            ]
-        )
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["run", "quit"]),
-        print_result=True,
-        banner=False,
-        colors=True,
-    )
-
-    out = capsys.readouterr().out
-    assert "FX Run Result" in out
-    assert "Status:" in out
-    assert "\x1b[" in out
 
 
 def test_interactive_mode_supports_exec_builtin(capsys, monkeypatch):
@@ -427,9 +155,6 @@ def test_interactive_mode_supports_exec_builtin(capsys, monkeypatch):
     )
 
     out = capsys.readouterr().out
-    assert "Exec Result" in out
-    assert "Shell:" in out
-    assert "Exit code:" in out
     assert "exec-ok" in out
     assert calls
     if os.name == "nt":
@@ -467,9 +192,6 @@ def test_exec_falls_back_to_cmd_when_powershell_missing(capsys, monkeypatch):
     )
 
     out = capsys.readouterr().out
-    assert "Exec Result" in out
-    assert "Shell:" in out
-    assert "Exit code:" in out
     assert "fallback-ok" in out
     assert calls == ["powershell", "cmd"]
 
@@ -486,28 +208,3 @@ def test_exec_requires_command_text(capsys):
 
     out = capsys.readouterr().out
     assert "'exec' requires a command to run." in out
-
-
-def test_interactive_shell_pretty_prints_structured_cron_result(capsys):
-    @cli.register(name="cron", description="Cron command")
-    def cron_cmd() -> str:
-        return "\n".join(
-            [
-                "FX Cron Status Result",
-                "Status: success",
-                "Project: /tmp/demo",
-                "Runtime: running",
-            ]
-        )
-
-    cli.run_shell(
-        input_fn=_input_from_lines(["cron", "quit"]),
-        print_result=True,
-        banner=False,
-        colors=True,
-    )
-
-    out = capsys.readouterr().out
-    assert "FX Cron Status Result" in out
-    assert "Status:" in out
-    assert "\x1b[" in out

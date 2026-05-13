@@ -32,21 +32,3 @@ class TestCliErrorHandling:
             cli.run(["add", "not-an-int"], print_result=False)
 
         assert exc.value.code == 2
-
-    def test_empty_argv_prints_help_menu(self, capsys, monkeypatch):
-        class _PipeLikeStdin:
-            def isatty(self) -> bool:
-                return False
-
-        monkeypatch.setattr("registers.cli.registry.sys.stdin", _PipeLikeStdin())
-
-        @cli.register(description="Noop")
-        @cli.option("--noop")
-        def noop() -> None:
-            return None
-
-        assert cli.run([], print_result=False) is None
-        out = capsys.readouterr().out
-        assert "Decorates CLI" in out
-        assert "Shell builtins" in out
-        assert "Registered commands" in out

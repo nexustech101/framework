@@ -11,10 +11,6 @@ def _reset_registry():
     cli.reset_registry()
 
 
-def test_registry_class_no_longer_exposes_register_decorator_method():
-    assert not hasattr(cli.CommandRegistry, "register")
-
-
 def test_module_level_decorators_finalize_command_with_argument_order():
     @cli.register(description="Add a todo")
     @cli.argument("title", type=str, help="Title")

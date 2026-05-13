@@ -327,7 +327,7 @@ if __name__ == "__main__":
 ```python
 from __future__ import annotations
 
-import registers.cli as cli
+from registers import CommandRegistry
 import registers.cron as cron
 
 @cron.job

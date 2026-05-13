@@ -38,13 +38,11 @@ from registers.cli.decorators import (
     list_commands,
     option,
     alias,
-    progress,
     register,
     reset_registry,
     run,
     run_async,
     run_shell,
-    spinner,
 )
 from registers.cli.dispatcher import Dispatcher
 from registers.cli.exceptions import (
@@ -63,7 +61,7 @@ from registers.cli.middleware import (
 from registers.cli.parser import ParseError, parse_command_args
 from registers.cli.plugins import load_plugins
 from registers.cli.registry import ArgumentEntry, CommandEntry, CommandRegistry, MISSING
-from registers.cli.ux import Context, Progress, Theme, console, style
+from registers.cli.ux import Context
 from registers.cli import types
 
 __all__ = [
@@ -73,8 +71,6 @@ __all__ = [
     "option",
     "alias",
     "group",
-    "spinner",
-    "progress",
     "confirm",
     "dry_run",
     "context_factory",
@@ -90,11 +86,7 @@ __all__ = [
     "CommandEntry",
     "ArgumentEntry",
     "MISSING",
-    "Theme",
     "Context",
-    "console",
-    "style",
-    "Progress",
     "types",
     "parse_command_args",
     "ParseError",

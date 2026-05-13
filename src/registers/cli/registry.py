@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from difflib import get_close_matches
-from contextlib import nullcontext
 import inspect
 import logging
 import os
@@ -20,7 +19,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Sequence, get_args, get_origin
 
 from registers.cli.exceptions import CommandExecutionError, DuplicateCommandError, RegistrationError, UnknownCommandError
-from registers.cli.ux import Context, Progress, capture_logs, format_error, print_result as render_print_result, run_awaitable
+from registers.cli.ux import Context, capture_logs, format_error, print_result as render_print_result, run_awaitable
 from registers.core.logging import log_exception
 from registers.cli.utils.reflection import get_params
 from registers.cli.utils.typing import is_bool_flag, is_optional
@@ -83,8 +82,6 @@ class CommandEntry:
     pager: bool = False
     error_hints: dict[str, str] = field(default_factory=dict)
     capture_logs: bool = False
-    spinner: str | None = None
-    progress: str | None = None
     confirm_message: str | None = None
     confirm_danger: bool = False
     confirm_phrase: str | None = None
@@ -117,8 +114,6 @@ class _CommandConfig:
     pager: bool = False
     error_hints: dict[str, str] = field(default_factory=dict)
     capture_logs: bool = False
-    spinner: str | None = None
-    progress: str | None = None
     confirm_message: str | None = None
     confirm_danger: bool = False
     confirm_phrase: str | None = None
@@ -178,6 +173,7 @@ class CommandRegistry:
     def __init__(self) -> None:
         self._commands: dict[str, CommandEntry] = {}
         self._aliases: dict[str, str] = {}
+        self._groups: dict[str, tuple[str, tuple[str, ...]]] = {}
         self._pending_args: dict[Callable[..., Any], list[_StagedArgument]] = {}
         self._pending_options: dict[Callable[..., Any], list[_StagedOption]] = {}
         self._pending_config: dict[Callable[..., Any], _CommandConfig] = {}
@@ -208,10 +204,6 @@ class CommandRegistry:
             return self._decorator_register
         if name == "group":
             return self.group
-        if name == "spinner":
-            return self.spinner
-        if name == "progress":
-            return self.progress
         if name == "confirm":
             return self.confirm
         if name == "dry_run":
@@ -223,6 +215,76 @@ class CommandRegistry:
     # ------------------------------------------------------------------
     # Decorator staging + finalization
     # ------------------------------------------------------------------
+
+    def argument(
+        self,
+        name: str,
+        *,
+        type: Any = str,
+        help: str = "",
+        default: Any = MISSING,
+        prompt: bool = False,
+        secret: bool = False,
+        confirm: bool = False,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Declare an argument spec for commands registered on this registry."""
+        return self._decorator_argument(
+            name,
+            type=type,
+            help=help,
+            default=default,
+            prompt=prompt,
+            secret=secret,
+            confirm=confirm,
+        )
+
+    def option(
+        self,
+        flag: str,
+        *,
+        help: str = "",
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Declare a command option token, for example ``--add`` or ``-a``."""
+        return self._decorator_option(flag, help=help)
+
+    def alias(
+        self,
+        flag: str,
+        *,
+        help: str = "",
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Declare an alias token for a command registered on this registry."""
+        return self._decorator_alias(flag, help=help)
+
+    def register(
+        self,
+        name: str | None = None,
+        *,
+        description: str = "",
+        help: str = "",
+        tags: Sequence[str] = (),
+        examples: Sequence[str] = (),
+        deprecated: bool = False,
+        render: bool = True,
+        default_output: str | None = None,
+        pager: bool = False,
+        error_hints: dict[str, str] | None = None,
+        capture_logs: bool = False,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Finalize a staged command and register it on this registry."""
+        return self._decorator_register(
+            name,
+            description=description,
+            help=help,
+            tags=tags,
+            examples=examples,
+            deprecated=deprecated,
+            render=render,
+            default_output=default_output,
+            pager=pager,
+            error_hints=error_hints,
+            capture_logs=capture_logs,
+        )
 
     def _decorator_argument(
         self,
@@ -377,24 +439,6 @@ class CommandRegistry:
 
         self.stage_option(fn, flag, help_text=help_text)
 
-    def spinner(self, message: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        """Show a status message while the command runs when Rich is enabled."""
-
-        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-            self._config_for(fn).spinner = message
-            return fn
-
-        return decorator
-
-    def progress(self, description: str = "Working") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-        """Inject a Progress object into handlers that accept ``progress``."""
-
-        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-            self._config_for(fn).progress = description
-            return fn
-
-        return decorator
-
     def confirm(
         self,
         message: str,
@@ -436,6 +480,7 @@ class CommandRegistry:
         tags: Sequence[str] = (),
     ) -> "CommandGroup":
         """Create a grouped command facade, for example ``users list``."""
+        self._groups[name] = (description, tuple(tags))
         return CommandGroup(
             self,
             path=(name,),
@@ -463,16 +508,19 @@ class CommandRegistry:
 
         summary = description or help_text
         arguments_list = self._build_arguments(fn, staged_args)
-        if config.dry_run and not any(arg.name == "dry_run" for arg in arguments_list):
-            arguments_list.append(
-                ArgumentEntry(
-                    name="dry_run",
-                    type=bool,
-                    help_text="Preview the command without applying changes.",
-                    required=False,
-                    default=False,
-                )
+        if config.dry_run:
+            dry_run_arg = ArgumentEntry(
+                name="dry_run",
+                type=bool,
+                help_text="Preview the command without applying changes.",
+                required=False,
+                default=False,
             )
+            dry_run_index = next((idx for idx, arg in enumerate(arguments_list) if arg.name == "dry_run"), None)
+            if dry_run_index is None:
+                arguments_list.append(dry_run_arg)
+            else:
+                arguments_list[dry_run_index] = dry_run_arg
         arguments = tuple(arguments_list)
 
         self._assert_command_slot_available(command_name)
@@ -493,8 +541,6 @@ class CommandRegistry:
             pager=config.pager,
             error_hints=config.error_hints,
             capture_logs=config.capture_logs,
-            spinner=config.spinner,
-            progress=config.progress,
             confirm_message=config.confirm_message,
             confirm_danger=config.confirm_danger,
             confirm_phrase=config.confirm_phrase,
@@ -553,11 +599,10 @@ class CommandRegistry:
         shell_description: str = "Type 'help' for shell help and 'exit' to quit.",
         shell_version: str | None = None,
         colors: bool | None = None,
-        rich: bool = False,
         tag: str | None = None,
     ) -> None:
         """Print comprehensive CLI help for all commands or one specific command."""
-        use_color = self._supports_color(False if not rich and colors is None else colors)
+        use_color = self._supports_color(colors)
         if command_name is None:
             print(
                 self._render_global_help(
@@ -602,8 +647,6 @@ class CommandRegistry:
         shell_version: str | None = None,
         shell_colors: bool | None = None,
         shell_usage: bool = False,
-        rich: bool = False,
-        theme: Any | None = None,
         output: str | None = None,
         quiet: bool = False,
         verbose: bool = False,
@@ -622,6 +665,7 @@ class CommandRegistry:
         raw, context_kwargs = self._strip_context_args(raw)
         if not raw:
             if self._stdin_is_interactive():
+                context = self._build_context(context_kwargs)
                 return self.run_shell(
                     print_result=print_result,
                     prompt=shell_prompt,
@@ -634,8 +678,6 @@ class CommandRegistry:
                     shell_version=shell_version,
                     colors=False if no_color else shell_colors,
                     shell_usage=shell_usage,
-                    rich=rich,
-                    theme=theme,
                     output=output,
                     quiet=quiet,
                     verbose=verbose,
@@ -645,6 +687,7 @@ class CommandRegistry:
                     multiline=multiline,
                     log_level=log_level,
                     log_panel=log_panel,
+                    context=context,
                 )
             self.print_help(
                 program_name=program_name,
@@ -652,7 +695,6 @@ class CommandRegistry:
                 shell_description=shell_description,
                 shell_version=shell_version,
                 colors=False if no_color else shell_colors,
-                rich=rich,
             )
             return None
 
@@ -661,6 +703,7 @@ class CommandRegistry:
             if len(raw) > 1:
                 print(f"Error: {token} does not take additional arguments.")
                 raise SystemExit(2)
+            context = self._build_context(context_kwargs)
             return self.run_shell(
                 print_result=print_result,
                 prompt=shell_prompt,
@@ -673,8 +716,6 @@ class CommandRegistry:
                 shell_version=shell_version,
                 colors=False if no_color else shell_colors,
                 shell_usage=shell_usage,
-                rich=rich,
-                theme=theme,
                 output=output,
                 quiet=quiet,
                 verbose=verbose,
@@ -684,6 +725,7 @@ class CommandRegistry:
                 multiline=multiline,
                 log_level=log_level,
                 log_panel=log_panel,
+                context=context,
             )
 
         if self._is_builtin_help_token(token):
@@ -697,7 +739,6 @@ class CommandRegistry:
                         shell_description=shell_description,
                         shell_version=shell_version,
                         colors=False if no_color else shell_colors,
-                        rich=rich,
                     )
                 except UnknownCommandError:
                     suggestion = self.suggest(target)
@@ -713,7 +754,6 @@ class CommandRegistry:
                     shell_description=shell_description,
                     shell_version=shell_version,
                     colors=False if no_color else shell_colors,
-                    rich=rich,
                 )
             return None
 
@@ -727,10 +767,21 @@ class CommandRegistry:
                 print("Unknown command")
             raise SystemExit(2)
 
+        if any(arg in {"--help", "-h"} for arg in command_args):
+            self.print_help(
+                entry.name,
+                program_name=program_name,
+                shell_title=shell_title,
+                shell_description=shell_description,
+                shell_version=shell_version,
+                colors=False if no_color else shell_colors,
+            )
+            return None
+
         try:
             command_args, runtime_options = self._strip_runtime_options(entry, command_args)
         except ParseError as exc:
-            print(format_error("Parse Error", str(exc), rich=rich))
+            print(format_error("Parse Error", str(exc)))
             print(render_command_usage(entry, program_name=program_name))
             raise SystemExit(2)
         final_output = runtime_options.get("output", output or entry.default_output)
@@ -742,14 +793,14 @@ class CommandRegistry:
         try:
             kwargs = parse_command_args(entry, command_args, allow_missing_prompts=True)
         except ParseError as exc:
-            print(format_error("Parse Error", str(exc), rich=rich))
+            print(format_error("Parse Error", str(exc)))
             print(render_command_usage(entry, program_name=program_name))
             raise SystemExit(2)
 
         try:
             kwargs = self._prompt_missing(entry, kwargs, input_fn=shell_input_fn)
         except ParseError as exc:
-            print(format_error("Parse Error", str(exc), rich=rich))
+            print(format_error("Parse Error", str(exc)))
             print(render_command_usage(entry, program_name=program_name))
             raise SystemExit(2)
 
@@ -761,12 +812,11 @@ class CommandRegistry:
                 context=context,
                 force=force,
                 input_fn=shell_input_fn,
-                rich=rich,
                 log_level=log_level,
                 event_loop=event_loop,
             )
         except ParseError as exc:
-            print(format_error("Parse Error", str(exc), rich=rich))
+            print(format_error("Parse Error", str(exc)))
             print(render_command_usage(entry, program_name=program_name))
             raise SystemExit(2)
         except RegistrationError:
@@ -782,7 +832,7 @@ class CommandRegistry:
             raise CommandExecutionError(entry.name, str(exc)) from exc
 
         if print_result and result is not None and not quiet:
-            render_print_result(result, output=final_output, rich=rich and not no_color, render=entry.render)
+            render_print_result(result, output=final_output, render=entry.render)
 
         return result
 
@@ -799,13 +849,16 @@ class CommandRegistry:
         raw = list(sys.argv[1:] if argv is None else argv)
         raw, context_kwargs = self._strip_context_args(raw)
         if not raw:
-            self.print_help(rich=bool(kwargs.get("rich", False)))
+            self.print_help()
             return None
         if self._is_builtin_help_token(raw[0]):
-            self.print_help(raw[1] if len(raw) > 1 else None, rich=bool(kwargs.get("rich", False)))
+            self.print_help(raw[1] if len(raw) > 1 else None)
             return None
         try:
             entry, _command_tokens, command_args = self._resolve_command_tokens(raw)
+            if any(arg in {"--help", "-h"} for arg in command_args):
+                self.print_help(entry.name)
+                return None
             command_args, runtime_options = self._strip_runtime_options(entry, command_args)
             parsed = parse_command_args(entry, command_args, allow_missing_prompts=True)
             parsed = self._prompt_missing(entry, parsed, input_fn=kwargs.get("shell_input_fn"))
@@ -824,7 +877,6 @@ class CommandRegistry:
             render_print_result(
                 result,
                 output=runtime_options.get("output", kwargs.get("output") or entry.default_output),
-                rich=bool(kwargs.get("rich", False)),
                 render=entry.render,
             )
         return result
@@ -843,8 +895,6 @@ class CommandRegistry:
         shell_version: str | None = None,
         colors: bool | None = None,
         shell_usage: bool = False,
-        rich: bool = False,
-        theme: Any | None = None,
         output: str | None = None,
         quiet: bool = False,
         verbose: bool = False,
@@ -854,6 +904,7 @@ class CommandRegistry:
         multiline: bool = False,
         log_level: str | int | None = None,
         log_panel: bool = False,
+        context: Any | None = None,
     ) -> None:
         """Run this registry in interactive REPL mode."""
         from registers.cli.shell import InteractiveShell
@@ -871,8 +922,6 @@ class CommandRegistry:
             version_text=shell_version,
             colors=colors,
             usage=shell_usage,
-            rich=rich,
-            theme=theme,
             output=output,
             quiet=quiet,
             verbose=verbose,
@@ -882,6 +931,7 @@ class CommandRegistry:
             multiline=multiline,
             log_level=log_level,
             log_panel=log_panel,
+            context=context,
         )
         shell.run()
         return None
@@ -889,8 +939,11 @@ class CommandRegistry:
     def clear(self) -> None:
         self._commands.clear()
         self._aliases.clear()
+        self._groups.clear()
         self._pending_args.clear()
         self._pending_options.clear()
+        self._pending_config.clear()
+        self._context_factory = None
 
     def get_registry(self) -> CommandRegistry:
         """Return this registry instance (instance-mode compatibility helper)."""
@@ -922,6 +975,9 @@ class CommandRegistry:
         if plugin_registry is self:
             return 0
 
+        for group_name, metadata in plugin_registry._groups.items():
+            self._groups.setdefault(group_name, metadata)
+
         added = 0
         for entry in plugin_registry.all().values():
             self._assert_command_slot_available(entry.name)
@@ -932,6 +988,15 @@ class CommandRegistry:
                 if normalized:
                     self._aliases[normalized] = entry.name
             added += 1
+        for alias, target in plugin_registry._aliases.items():
+            if target not in self._commands:
+                continue
+            if alias in self._commands and alias != target:
+                raise DuplicateCommandError(alias)
+            existing = self._aliases.get(alias)
+            if existing is not None and existing != target:
+                raise DuplicateCommandError(alias)
+            self._aliases[alias] = target
         return added
 
     def dispatch(
@@ -1105,7 +1170,6 @@ class CommandRegistry:
         context: Any | None,
         force: bool,
         input_fn: Callable[[str], str] | None,
-        rich: bool,
         log_level: str | int | None,
         event_loop: Any | None,
     ) -> Any:
@@ -1113,21 +1177,10 @@ class CommandRegistry:
             self._confirm_command(entry, kwargs, input_fn=input_fn)
 
         call_kwargs = self._build_call_kwargs(entry, kwargs, context=context)
-        status_manager = nullcontext()
-        if entry.spinner:
-            from registers.cli.ux import console
-            status_manager = console.status(entry.spinner)
-
         with capture_logs(entry.capture_logs, level=log_level) as logs:
-            with status_manager:
-                if entry.progress and "progress" in {param.name for param in get_params(entry.handler)}:
-                    with Progress() as progress:
-                        call_kwargs["progress"] = progress
-                        result = entry.handler(**call_kwargs)
-                else:
-                    result = entry.handler(**call_kwargs)
-                if inspect.isawaitable(result):
-                    result = run_awaitable(result, event_loop=event_loop)
+            result = entry.handler(**call_kwargs)
+            if inspect.isawaitable(result):
+                result = run_awaitable(result, event_loop=event_loop)
             if logs and hasattr(logs, "getvalue"):
                 log_text = logs.getvalue().strip()
                 if log_text:
@@ -1334,7 +1387,7 @@ class CommandRegistry:
 
     @staticmethod
     def _is_injected_runtime_param(name: str, annotation: Any) -> bool:
-        if name in {"ctx", "context", "progress"}:
+        if name in {"ctx", "context"}:
             return True
         try:
             if inspect.isclass(annotation) and issubclass(annotation, Context):
@@ -1446,8 +1499,6 @@ class CommandRegistry:
                     ("help <command>", "Show detailed help for a specific command"),
                     ("commands", "List all registered commands"),
                     ("exec <command>", "Run a system command in the host shell"),
-                    ("watch <command>", "Re-run a command on an interval"),
-                    ("pipe <command>", "Transform structured command output"),
                     ("exit / quit", "Leave interactive mode"),
                 ],
                 use_color=use_color,
@@ -1470,7 +1521,7 @@ class CommandRegistry:
 
         prog = program_name or "app.py"
         summary = entry.help_text or entry.description or "No description provided."
-        aliases = ", ".join(entry.options) if entry.options else "none"
+        aliases = ", ".join(self._entry_aliases(entry)) or "none"
         usage = render_command_usage(entry, program_name=prog)
         tags = ", ".join(entry.tags) if entry.tags else "none"
 
@@ -1557,15 +1608,31 @@ class CommandRegistry:
             )
 
         rows = [
-            (entry.name, entry.help_text or entry.description or "No description provided.")
+            (
+                entry.name,
+                entry.help_text or entry.description or "No description provided.",
+            )
             for entry in entries
+            if " " not in entry.name
         ]
-        return "\n".join(
-            [
-                self._section_header(header, use_color),
-                self._render_help_table(rows, use_color=use_color),
-            ]
-        )
+
+        lines = [self._section_header(header, use_color)]
+        if rows:
+            lines.append(self._render_help_table(rows, use_color=use_color))
+
+        for group_name in self._groups:
+            if " " in group_name:
+                continue
+            group_rows = self._group_command_rows(group_name, entries)
+            if not group_rows:
+                continue
+            if len(lines) > 1:
+                lines.append("")
+            description = self._groups.get(group_name, ("", ()))[0] or f"{group_name} commands"
+            lines.append(f"  {self._c(self._format_group_label(group_name), _C.CYAN, use_color)}  {description}")
+            lines.append(self._render_help_table(group_rows, use_color=use_color, indent=4))
+
+        return "\n".join(lines)
 
     def _has_group(self, group_name: str) -> bool:
         prefix = self._normalize_alias(group_name)
@@ -1587,18 +1654,27 @@ class CommandRegistry:
         prefix = self._normalize_alias(group_name)
         if prefix in self._aliases:
             prefix = self._aliases[prefix]
+        rows = self._group_command_rows(prefix, list(self._commands.values()))
+        lines = [self._section_header(f"Command group: {self._format_group_label(prefix)}", use_color)]
+        if rows:
+            lines.append(self._render_help_table(rows, use_color=use_color))
+        lines.extend(["", self._c(f"Tip: run 'help {prefix} <command>' for details.", _C.DIM, use_color)])
+        return "\n".join(lines)
+
+    def _group_command_rows(self, group_name: str, entries: list[CommandEntry]) -> list[tuple[str, str]]:
         rows = []
-        for entry in self._commands.values():
-            if entry.name.startswith(f"{prefix} "):
-                rows.append((entry.name, entry.help_text or entry.description or "No description provided."))
-        return "\n".join(
-            [
-                self._section_header(f"Command group: {prefix}", use_color),
-                self._render_help_table(rows, use_color=use_color),
-                "",
-                self._c(f"Tip: run 'help {prefix} <command>' for details.", _C.DIM, use_color),
-            ]
-        )
+        command_prefix = f"{group_name} "
+        for entry in entries:
+            if not entry.name.startswith(command_prefix):
+                continue
+            relative = entry.name[len(command_prefix):]
+            rows.append(
+                (
+                    self._command_signature(entry, primary=relative),
+                    entry.help_text or entry.description or "No description provided.",
+                )
+            )
+        return rows
 
     def _render_help_table(self, rows: list[tuple[str, str]], *, use_color: bool, indent: int = 2) -> str:
         if not rows:
@@ -1609,6 +1685,56 @@ class CommandRegistry:
             f"{pad}{self._c(key, _C.CYAN, use_color)}{' ' * (col_width - len(key))}  {value}"
             for key, value in rows
         )
+
+    def _command_signature(self, entry: CommandEntry, *, primary: str | None = None) -> str:
+        parts = [primary or entry.name]
+        for arg in entry.arguments:
+            flag = f"--{arg.name.replace('_', '-')}"
+            if self._render_argument_type(arg.type) == "bool":
+                parts.append(f"[{flag}]")
+            elif arg.required:
+                parts.append(f"<{self._argument_label(arg)}>")
+            else:
+                parts.append(f"[{self._argument_label(arg)}]")
+        return " ".join(parts)
+
+    @staticmethod
+    def _argument_label(arg: ArgumentEntry) -> str:
+        choices = getattr(arg.type, "choices", None)
+        if choices:
+            return f"{arg.name}: {'|'.join(str(choice) for choice in choices)}"
+        return arg.name
+
+    def _entry_aliases(self, entry: CommandEntry) -> tuple[str, ...]:
+        aliases: list[str] = list(entry.options)
+        option_normalized = {self._normalize_alias(option) for option in entry.options}
+        for alias, target in sorted(self._aliases.items()):
+            if target != entry.name or alias in option_normalized:
+                continue
+            aliases.append(alias)
+        return tuple(dict.fromkeys(aliases))
+
+    def _format_entry_label(self, entry: CommandEntry, *, primary: str | None = None) -> str:
+        names = [primary or entry.name]
+        names.extend(self._entry_aliases(entry))
+        return ", ".join(dict.fromkeys(names))
+
+    def _group_aliases(self, group_name: str) -> tuple[str, ...]:
+        prefix = f"{group_name} "
+        aliases: list[str] = []
+        for alias, target in sorted(self._aliases.items()):
+            if target.startswith(prefix) and " " in alias:
+                alias_group = alias.rsplit(" ", 1)[0]
+                if alias_group == group_name:
+                    continue
+                if " " not in group_name:
+                    alias_group = alias_group.split(" ", 1)[0]
+                aliases.append(alias_group)
+        return tuple(dict.fromkeys(aliases))
+
+    def _format_group_label(self, group_name: str, *, primary: str | None = None) -> str:
+        names = [primary or group_name, *self._group_aliases(group_name)]
+        return ", ".join(dict.fromkeys(names))
 
     @staticmethod
     def _section_header(title: str, use_color: bool) -> str:
@@ -1689,12 +1815,6 @@ class CommandGroup:
     def alias(self, *args: Any, **kwargs: Any) -> Any:
         return self._registry.alias(*args, **kwargs)
 
-    def spinner(self, *args: Any, **kwargs: Any) -> Any:
-        return self._registry.spinner(*args, **kwargs)
-
-    def progress(self, *args: Any, **kwargs: Any) -> Any:
-        return self._registry.progress(*args, **kwargs)
-
     def confirm(self, *args: Any, **kwargs: Any) -> Any:
         return self._registry.confirm(*args, **kwargs)
 
@@ -1717,9 +1837,11 @@ class CommandGroup:
             for alias in aliases
         )
         alias_paths = inherited_aliases + local_aliases + combined_aliases
+        full_path = self._path + (name,)
+        self._registry._groups[" ".join(full_path)] = (description, self.tags + tuple(tags))
         return CommandGroup(
             self._registry,
-            path=self._path + (name,),
+            path=full_path,
             alias_paths=alias_paths,
             description=description,
             tags=self.tags + tuple(tags),
