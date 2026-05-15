@@ -3,7 +3,13 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from pathlib import Path
+import sys
 from time import strftime
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 import registers.cli as cli
 import registers.db as db

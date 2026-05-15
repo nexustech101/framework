@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 import registers.cli as cli
 
